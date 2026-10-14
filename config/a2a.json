@@ -1,0 +1,27 @@
+{
+    "a2a": {
+        "enabled": true,
+        "peers": [
+            "https://gateway.alsania-io.com/alsaniamcp",
+            "https://gateway.alsania-io.com/mcpnyx",
+            "https://gateway.alsania-io.com/mcpnyx-u",
+            "https://gateway.alsania-io.com/tool-registry",
+            "http://0.0.0.0:8052/gateway",
+            "http://0.0.0.0:3055/mcp",
+            "http://0.0.0.0:3057/mcp",
+            "http://0.0.0.0:8076/mcp"
+        ],
+        "timeout": 60000,
+        "autoRetry": true,
+        "strict": false,
+        "gateway": {
+            "peerId": "gateway-bridge",
+            "endpoints": {
+                "agentCard": "/a2a/.well-known/agent-card.json",
+                "register": "/a2a/register",
+                "message": "/a2a/message",
+                "health": "/health"
+            }
+        }
+    }
+}

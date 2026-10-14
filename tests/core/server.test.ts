@@ -1,10 +1,10 @@
-import { UniversalMCPServer } from "../../src/core/server";
+import { AlsaniaMcp } from "../../src/core/server";
 
-describe("UniversalMCPServer", () => {
-  let server: UniversalMCPServer;
+describe("AlsaniaMcp", () => {
+  let server: AlsaniaMcp;
 
   beforeEach(() => {
-    server = new UniversalMCPServer();
+    server = new AlsaniaMcp();
   });
 
   afterEach(() => {

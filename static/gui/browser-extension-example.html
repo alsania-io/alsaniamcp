@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AlsaniaMCP Browser Model Client - Example</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0e27;
+      color: #00ff00;
+      max-width: 1200px;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 {
+      color: #00ff00;
+      text-shadow: 0 0 10px #00ff00;
+      margin-bottom: 30px;
+    }
+    .section {
+      background: #1a1f3a;
+      border: 2px solid #00ff00;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .code-block {
+      background: #0f1219;
+      border-left: 3px solid #00ff00;
+      padding: 12px;
+      margin: 10px 0;
+      overflow-x: auto;
+      border-radius: 4px;
+    }
+    .browser-model {
+      background: #1a2f3a;
+      border: 1px solid #00aa00;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 4px;
+    }
+    button {
+      background: #00ff00;
+      color: #0a0e27;
+      border: none;
+      padding: 8px 16px;
+      margin: 5px;
+      cursor: pointer;
+      border-radius: 4px;
+      font-weight: bold;
+      transition: all 0.3s;
+    }
+    button:hover {
+      background: #00cc00;
+      box-shadow: 0 0 10px #00ff00;
+    }
+    button:disabled {
+      background: #666;
+      cursor: not-allowed;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+      border-left: 3px solid;
+    }
+    .status.connected {
+      background: #0a2a0a;
+      border-color: #00ff00;
+      color: #00ff00;
+    }
+    .status.disconnected {
+      background: #2a0a0a;
+      border-color: #ff0000;
+      color: #ff6666;
+    }
+    .log {
+      background: #0f1219;
+      border: 1px solid #00ff00;
+      border-radius: 4px;
+      padding: 10px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-size: 12px;
+    }
+    input {
+      background: #1a1f3a;
+      border: 1px solid #00ff00;
+      color: #00ff00;
+      padding: 8px;
+      border-radius: 4px;
+      width: 300px;
+      font-family: 'Courier New', monospace;
+    }
+    input::placeholder {
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1>🌐 AlsaniaMCP Browser Model Client</h1>
+
+  <div class="section">
+    <h2>Browser Model Platforms Supported</h2>
+    <div class="browser-model">
+      <strong>ChatGPT</strong>
+      <p>Platform: <code>chatgpt</code></p>
+      <p>Connect your ChatGPT browser session to AlsaniaMCP</p>
+      <button onclick="connectModel('ChatGPT', 'chatgpt')">Connect ChatGPT</button>
+    </div>
+    <div class="browser-model">
+      <strong>Claude</strong>
+      <p>Platform: <code>claude</code></p>
+      <p>Connect your Claude browser session to AlsaniaMCP</p>
+      <button onclick="connectModel('Claude', 'claude')">Connect Claude</button>
+    </div>
+    <div class="browser-model">
+      <strong>Google Gemini</strong>
+      <p>Platform: <code>gemini</code></p>
+      <p>Connect your Gemini browser session to AlsaniaMCP</p>
+      <button onclick="connectModel('Gemini', 'gemini')">Connect Gemini</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Model Status</h2>
+    <div id="status" class="status disconnected">
+      ⚪ Disconnected
+    </div>
+    <div id="modelInfo" style="display:none; margin-top: 10px;">
+      <p><strong>Model ID:</strong> <span id="modelIdDisplay">-</span></p>
+      <p><strong>Agent ID:</strong> <span id="agentIdDisplay">-</span></p>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Send Message</h2>
+    <input type="text" id="messageInput" placeholder="Enter message..." />
+    <button onclick="sendMessage()">Send</button>
+    <label>
+      <input type="checkbox" id="privateCheckbox" /> Private Message
+    </label>
+  </div>
+
+  <div class="section">
+    <h2>Wake Triggers</h2>
+    <input type="text" id="triggerInput" placeholder="Enter trigger phrase..." />
+    <select id="signalType">
+      <option value="silent">Silent</option>
+      <option value="visual">Visual</option>
+      <option value="sound">Sound</option>
+      <option value="all">All Signals</option>
+    </select>
+    <button onclick="addTrigger()">Add Trigger</button>
+  </div>
+
+  <div class="section">
+    <h2>Queries</h2>
+    <button onclick="getUnreadMessages()">Get Unread Messages</button>
+    <button onclick="getModelInfo()">Get Model Info</button>
+    <button onclick="getAllModels()">List All Models</button>
+  </div>
+
+  <div class="section">
+    <h2>Activity Log</h2>
+    <div class="log" id="log"></div>
+    <button onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <script src="browser-model-client.js"></script>
+  <script>
+    let client = null;
+
+    function log(message) {
+      const logDiv = document.getElementById('log');
+      const timestamp = new Date().toLocaleTimeString();
+      const line = document.createElement('div');
+      line.textContent = `[${timestamp}] ${message}`;
+      logDiv.appendChild(line);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    function updateStatus(isConnected) {
+      const statusDiv = document.getElementById('status');
+      if (isConnected) {
+        statusDiv.className = 'status connected';
+        statusDiv.innerHTML = '🟢 Connected';
+        document.getElementById('modelInfo').style.display = 'block';
+      } else {
+        statusDiv.className = 'status disconnected';
+        statusDiv.innerHTML = '⚪ Disconnected';
+        document.getElementById('modelInfo').style.display = 'none';
+      }
+    }
+
+    async function connectModel(name, platform) {
+      try {
+        if (client && client.isConnected) {
+          client.disconnect();
+        }
+
+        log(`Connecting ${name}...`);
+        client = new AlsaniaBrowserModelClient({
+          name,
+          platform,
+          serverUrl: `ws://${window.location.host}`
+        });
+
+        await client.connect();
+        log(`✅ ${name} connected!`);
+        updateStatus(true);
+
+        client.on('registered', (data) => {
+          log(`✅ Registered as agent: ${data.agentId}`);
+          document.getElementById('modelIdDisplay').textContent = data.modelId;
+          document.getElementById('agentIdDisplay').textContent = data.agentId;
+        });
+
+        client.on('message_stored', (data) => {
+          log(`📨 Message stored: "${data.content.substring(0, 50)}..."`);
+        });
+
+        client.on('trigger_added', (data) => {
+          log(`🔔 Trigger added: "${data.phrase}"`);
+        });
+
+        client.on('external_message', (data) => {
+          log(`💬 Message from ${data.from}: "${data.content.substring(0, 50)}..."`);
+        });
+
+        client.on('error', (error) => {
+          log(`❌ Error: ${error}`);
+        });
+      } catch (error) {
+        log(`❌ Connection failed: ${error.message}`);
+        updateStatus(false);
+      }
+    }
+
+    async function sendMessage() {
+      try {
+        if (!client || !client.isConnected) {
+          log('❌ Not connected');
+          return;
+        }
+
+        const content = document.getElementById('messageInput').value;
+        if (!content) {
+          log('❌ Message cannot be empty');
+          return;
+        }
+
+        const isPrivate = document.getElementById('privateCheckbox').checked;
+        await client.sendMessage(content, { isPrivate });
+        log(`✉️ Message sent: "${content}"`);
+        document.getElementById('messageInput').value = '';
+      } catch (error) {
+        log(`❌ Send failed: ${error.message}`);
+      }
+    }
+
+    async function addTrigger() {
+      try {
+        if (!client || !client.isConnected) {
+          log('❌ Not connected');
+          return;
+        }
+
+        const phrase = document.getElementById('triggerInput').value;
+        const signalType = document.getElementById('signalType').value;
+        if (!phrase) {
+          log('❌ Trigger phrase cannot be empty');
+          return;
+        }
+
+        await client.addTrigger(phrase, signalType);
+        log(`🔔 Trigger added: "${phrase}" (${signalType})`);
+        document.getElementById('triggerInput').value = '';
+      } catch (error) {
+        log(`❌ Trigger failed: ${error.message}`);
+      }
+    }
+
+    async function getUnreadMessages() {
+      try {
+        if (!client || !client.isConnected) {
+          log('❌ Not connected');
+          return;
+        }
+
+        const messages = await client.getUnreadMessages();
+        log(`📬 Retrieved ${messages.length} unread messages`);
+        messages.forEach(msg => {
+          log(`  - ${msg.from}: "${msg.content.substring(0, 40)}..."`);
+        });
+      } catch (error) {
+        log(`❌ Query failed: ${error.message}`);
+      }
+    }
+
+    async function getModelInfo() {
+      try {
+        if (!client || !client.isConnected) {
+          log('❌ Not connected');
+          return;
+        }
+
+        const info = await client.getModelInfo();
+        log(`ℹ️ Model info: ${JSON.stringify(info)}`);
+      } catch (error) {
+        log(`❌ Query failed: ${error.message}`);
+      }
+    }
+
+    async function getAllModels() {
+      try {
+        const models = await client.query('all_models', {});
+        log(`🌐 Found ${models.length} connected models`);
+        models.forEach(model => {
+          log(`  - ${model.name} (${model.platform}) - ${model.isConnected ? 'online' : 'offline'}`);
+        });
+      } catch (error) {
+        log(`❌ Query failed: ${error.message}`);
+      }
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '';
+    }
+
+    // Auto-connect on load for testing
+    window.addEventListener('load', () => {
+      log('🚀 Browser Model Client Ready');
+      log('Select a browser platform above to connect');
+    });
+  </script>
+</body>
+</html>

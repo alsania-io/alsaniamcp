@@ -1,20 +1,43 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "strict": false,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": false,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
+    "skipDefaultLibCheck": true,
+    "downlevelIteration": true,
+    "allowImportingTsExtensions": false,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "outDir": "dist",
+    "types": ["node"],
+    "noImplicitAny": false,
+    "noImplicitReturns": false,
+    "noImplicitThis": false,
+    "resolveJsonModule": true,
+    "allowJs": true,
+    "noErrorTruncation": true,
+    "isolatedModules": true,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": false,
+    "noPropertyAccessFromIndexSignature": false,
+    "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/voice"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/voice"
+  ],
+  "ts-node": {
+    "esm": true
+  }
 }

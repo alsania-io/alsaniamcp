@@ -1,0 +1,24 @@
+[
+  {
+    "name": "alsaniamcp+gateway",
+    "paths": [
+      ".dockerignore",
+      ".gitignore",
+      ".npmignore",
+      "CHANGELOG.md",
+      "CONTRIBUTING.md",
+      "Dockerfile",
+      "LICENSE",
+      "README.md",
+      "docker-compose.yml",
+      "jest.config.js",
+      "package-lock.json",
+      "package.json",
+      "tsconfig.json",
+      "docs",
+      "scripts",
+      "src",
+      "tests"
+    ]
+  }
+]

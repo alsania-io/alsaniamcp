@@ -3,27 +3,27 @@
  * Enables peer-to-peer communication between AI agents and MCP servers
  */
 
-import { EventEmitter } from 'events';
-import { UniversalMCPServer } from '../core/server.js';
-import { MCPProxyManager } from '../proxy/mcp-proxy.js';
-import { ServerSpawnerManager } from '../spawner/index.js';
+import { EventEmitter } from "events";
+import { AlsaniaMcp } from "../core/server.js";
+import { MCPProxyManager } from "../proxy/mcp-proxy.js";
+import { ServerSpawnerManager } from "../spawner/index.js";
 
 // Message types for A2A communication
 export enum MessageType {
-  REQUEST = 'request',
-  RESPONSE = 'response',
-  EVENT = 'event',
-  COMMAND = 'command',
-  ERROR = 'error',
-  HEARTBEAT = 'heartbeat'
+  REQUEST = "request",
+  RESPONSE = "response",
+  EVENT = "event",
+  COMMAND = "command",
+  ERROR = "error",
+  HEARTBEAT = "heartbeat",
 }
 
 // Priority levels for messages
 export enum MessagePriority {
-  LOW = 'low',
-  NORMAL = 'normal',
-  HIGH = 'high',
-  URGENT = 'urgent'
+  LOW = "low",
+  NORMAL = "normal",
+  HIGH = "high",
+  URGENT = "urgent",
 }
 
 // Message interface
@@ -55,7 +55,7 @@ export interface Peer {
   id: string;
   name: string;
   capabilities: string[];
-  status: 'online' | 'offline' | 'busy';
+  status: "online" | "offline" | "busy";
   lastSeen: number;
   metadata?: Record<string, any>;
 }
@@ -68,6 +68,7 @@ export interface A2AConfig {
   timeoutMs: number;
   heartbeatInterval: number;
   messageTTLSecs: number;
+  startTime: number;
 }
 
 // Communication events
@@ -86,22 +87,30 @@ export interface A2AEvents {
 export class A2ACommunication extends EventEmitter {
   private config: A2AConfig;
   private peers: Map<string, Peer> = new Map();
-  private pendingRequests: Map<string, {
-    resolve: (value: any) => void;
-    reject: (error: any) => void;
-    timeout: NodeJS.Timeout;
-  }> = new Map();
+  private pendingRequests: Map<
+    string,
+    {
+      resolve: (value: A2AResponse) => void;
+      reject: (error: Error) => void;
+      timeout: NodeJS.Timeout;
+      messageId: string;
+      correlationId: string;
+      timestamp: number;
+      cleanup: () => void;
+    }
+  > = new Map();
   private messageQueue: A2AMessage[] = [];
   private heartbeatInterval?: NodeJS.Timeout;
+  private messageStore: Map<string, any[]> = new Map();
 
   // Integrations
-  private mcpServer: UniversalMCPServer;
+  private mcpServer: AlsaniaMcp;
   private proxyManager?: MCPProxyManager;
   private spawnerManager?: ServerSpawnerManager;
 
   constructor(
     config: A2AConfig,
-    mcpServer: UniversalMCPServer,
+    mcpServer: AlsaniaMcp,
     proxyManager?: MCPProxyManager,
     spawnerManager?: ServerSpawnerManager
   ) {
@@ -114,6 +123,62 @@ export class A2ACommunication extends EventEmitter {
 
     // Start heartbeat
     this.startHeartbeat();
+  }
+
+  /**
+   * Create a pending request entry with proper cleanup
+   */
+  private createPendingRequest(
+    messageId: string,
+    correlationId: string,
+    timeoutMs: number
+  ) {
+    const timestamp = Date.now();
+    let hasResolved = false;
+
+    const timeout = setTimeout(() => {
+      if (!hasResolved) {
+        hasResolved = true;
+        this.pendingRequests.delete(correlationId);
+        const entry = this.pendingRequests.get(correlationId);
+        if (entry) {
+          entry.reject(
+            new Error(
+              `Request timeout: correlationId=${correlationId}, messageId=${messageId}`
+            )
+          );
+        }
+      }
+    }, timeoutMs);
+
+    const entry = {
+      resolve: (value: A2AResponse) => {
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+        }
+      },
+      reject: (error: Error) => {
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+        }
+      },
+      timeout,
+      messageId,
+      correlationId,
+      timestamp,
+      cleanup: () => {
+        if (!hasResolved) {
+          hasResolved = true;
+          clearTimeout(timeout);
+          this.pendingRequests.delete(correlationId);
+        }
+      },
+    };
+
+    this.pendingRequests.set(correlationId, entry);
+    return entry;
   }
 
   /**
@@ -137,7 +202,7 @@ export class A2ACommunication extends EventEmitter {
       type,
       priority: options.priority || MessagePriority.NORMAL,
       from: this.config.peerId,
-      to: to || '*',
+      to: to || "*",
       timestamp: Date.now(),
       payload,
       correlationId: options.correlationId,
@@ -145,20 +210,32 @@ export class A2ACommunication extends EventEmitter {
       metadata: options.metadata,
     };
 
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error(`Message timeout: ${messageId}`));
-      }, this.config.timeoutMs);
-
-      this.pendingRequests.set(messageId, {
-        resolve,
-        reject,
-        timeout,
-      });
+    // Only create timeout/reject promise for requests that need responses
+    if (type === MessageType.REQUEST || type === MessageType.COMMAND) {
+      const correlationId = options.correlationId || messageId;
+      const pendingRequest = await this.createPendingRequest(
+        messageId,
+        correlationId,
+        this.config.timeoutMs
+      );
 
       this.queueMessage(message);
-      this.processQueue();
-    });
+      await this.processQueue();
+
+      return new Promise<string>((resolve, reject) => {
+        pendingRequest.resolve = (value: A2AResponse) => {
+          resolve(messageId);
+        };
+        pendingRequest.reject = (error: Error) => {
+          reject(error);
+        };
+      });
+    } else {
+      // For events, heartbeats, etc. - fire and forget
+      this.queueMessage(message);
+      await this.processQueue();
+      return messageId;
+    }
   }
 
   /**
@@ -173,32 +250,60 @@ export class A2ACommunication extends EventEmitter {
       metadata: Record<string, any>;
     }> = {}
   ): Promise<A2AResponse> {
+    const messageId = this.generateId();
     const correlationId = this.generateId();
+    let hasResolved = false;
 
-    await this.sendMessage(to, MessageType.REQUEST, payload, {
+    const message: A2AMessage = {
+      id: messageId,
+      type: MessageType.REQUEST,
+      priority: options.priority || MessagePriority.NORMAL,
+      from: this.config.peerId,
+      to: to,
+      timestamp: Date.now(),
+      payload,
       correlationId,
       ttl: this.config.messageTTLSecs,
-      ...options,
-    });
+      metadata: options.metadata,
+    };
 
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pendingRequests.delete(correlationId);
-        reject(new Error(`Request timeout: ${correlationId}`));
-      }, options.timeout || this.config.timeoutMs);
+    // Create pending request with proper cleanup
+    const pendingRequest = await this.createPendingRequest(
+      messageId,
+      correlationId,
+      options.timeout || this.config.timeoutMs
+    );
 
-      this.pendingRequests.set(correlationId, {
-        resolve,
-        reject,
-        timeout,
-      });
+    this.queueMessage(message);
+    await this.processQueue();
+
+    return new Promise<A2AResponse>((resolve, reject) => {
+      const originalResolve = pendingRequest.resolve;
+      const originalReject = pendingRequest.reject;
+
+      pendingRequest.resolve = (value: A2AResponse) => {
+        if (!hasResolved) {
+          hasResolved = true;
+          resolve(value);
+        }
+      };
+
+      pendingRequest.reject = (error: Error) => {
+        if (!hasResolved) {
+          hasResolved = true;
+          reject(error);
+        }
+      };
     });
   }
 
   /**
    * Send a response to a request
    */
-  async sendResponse(correlationId: string, response: Omit<A2AResponse, 'id' | 'correlationId' | 'timestamp'>): Promise<void> {
+  async sendResponse(
+    correlationId: string,
+    response: Omit<A2AResponse, "id" | "correlationId" | "timestamp">
+  ): Promise<void> {
     const responseMessage: A2AResponse = {
       id: this.generateId(),
       correlationId,
@@ -211,15 +316,17 @@ export class A2ACommunication extends EventEmitter {
     if (pendingRequest) {
       // Resolve the pending request
       if (response.success) {
-        pendingRequest.resolve(response);
+        pendingRequest.resolve(responseMessage);
       } else {
-        pendingRequest.reject(new Error(response.error || 'Request failed'));
+        pendingRequest.reject(
+          new Error(response.error || `Request failed: ${correlationId}`)
+        );
       }
-      clearTimeout(pendingRequest.timeout);
+      pendingRequest.cleanup(); // Use cleanup method for proper resource management
       this.pendingRequests.delete(correlationId);
     } else {
       // Broadcast response if no pending request (fire and forget)
-      this.emit('response', responseMessage);
+      this.emit("response", responseMessage);
     }
   }
 
@@ -229,7 +336,7 @@ export class A2ACommunication extends EventEmitter {
   registerPeer(peer: Peer): void {
     peer.lastSeen = Date.now();
     this.peers.set(peer.id, peer);
-    this.emit('peerConnected', peer);
+    this.emit("peerConnected", peer);
     console.log(`[A2A] Peer registered: ${peer.name} (${peer.id})`);
   }
 
@@ -240,7 +347,7 @@ export class A2ACommunication extends EventEmitter {
     const peer = this.peers.get(peerId);
     if (peer) {
       this.peers.delete(peerId);
-      this.emit('peerDisconnected', peerId);
+      this.emit("peerDisconnected", peerId);
       console.log(`[A2A] Peer unregistered: ${peer.name} (${peerId})`);
     }
   }
@@ -255,7 +362,7 @@ export class A2ACommunication extends EventEmitter {
   /**
    * Update peer status
    */
-  updatePeerStatus(peerId: string, status: Peer['status']): void {
+  updatePeerStatus(peerId: string, status: Peer["status"]): void {
     const peer = this.peers.get(peerId);
     if (peer) {
       peer.status = status;
@@ -269,7 +376,7 @@ export class A2ACommunication extends EventEmitter {
   async executeTool(peerId: string, toolName: string, args: any): Promise<any> {
     try {
       const response = await this.request(peerId, {
-        action: 'execute_tool',
+        action: "execute_tool",
         toolName,
         args,
       });
@@ -277,7 +384,7 @@ export class A2ACommunication extends EventEmitter {
       if (response.success) {
         return response.data;
       } else {
-        throw new Error(response.error || 'Tool execution failed');
+        throw new Error(response.error || "Tool execution failed");
       }
     } catch (error) {
       console.error(`[A2A] Tool execution failed:`, error);
@@ -291,14 +398,14 @@ export class A2ACommunication extends EventEmitter {
   async spawnRemoteServer(peerId: string, serverConfig: any): Promise<any> {
     try {
       const response = await this.request(peerId, {
-        action: 'spawn_server',
+        action: "spawn_server",
         config: serverConfig,
       });
 
       if (response.success) {
         return response.data;
       } else {
-        throw new Error(response.error || 'Server spawning failed');
+        throw new Error(response.error || "Server spawning failed");
       }
     } catch (error) {
       console.error(`[A2A] Remote server spawning failed:`, error);
@@ -309,7 +416,11 @@ export class A2ACommunication extends EventEmitter {
   /**
    * Broadcast a message to all peers
    */
-  async broadcast(type: MessageType, payload: any, options: any = {}): Promise<void> {
+  async broadcast(
+    type: MessageType,
+    payload: any,
+    options: any = {}
+  ): Promise<void> {
     await this.sendMessage(null, type, payload, options);
   }
 
@@ -318,7 +429,7 @@ export class A2ACommunication extends EventEmitter {
    */
   handleIncomingMessage(message: A2AMessage): void {
     // Check TTL
-    if (message.ttl && message.timestamp + (message.ttl * 1000) < Date.now()) {
+    if (message.ttl && message.timestamp + message.ttl * 1000 < Date.now()) {
       console.warn(`[A2A] Message expired: ${message.id}`);
       return;
     }
@@ -340,7 +451,7 @@ export class A2ACommunication extends EventEmitter {
         break;
 
       case MessageType.EVENT:
-        this.emit('message', message);
+        this.emit("message", message);
         break;
 
       case MessageType.COMMAND:
@@ -348,7 +459,10 @@ export class A2ACommunication extends EventEmitter {
         break;
 
       case MessageType.ERROR:
-        this.emit('error', new Error(message.payload.message || 'Unknown error'));
+        this.emit(
+          "error",
+          new Error(message.payload.message || "Unknown error")
+        );
         break;
 
       case MessageType.HEARTBEAT:
@@ -369,33 +483,39 @@ export class A2ACommunication extends EventEmitter {
       let result: any;
 
       switch (action) {
-        case 'execute_tool':
+        case "execute_tool":
           // Execute MCP tool via local server
-          result = await this.mcpServer.callTool(params.serverId || 'default', params.toolName, params.args);
+          result = await this.mcpServer.callTool(
+            params.serverId || "default",
+            params.toolName,
+            params.args
+          );
           break;
 
-        case 'list_tools':
+        case "list_tools":
           result = await this.mcpServer.listTools();
           break;
 
-        case 'list_resources':
+        case "list_resources":
           result = await this.mcpServer.listResources();
           break;
 
-        case 'spawn_server':
+        case "spawn_server":
           if (this.spawnerManager) {
-            const spawnResult = await this.spawnerManager.startCustomServer(params.config);
+            const spawnResult = await this.spawnerManager.startCustomServer(
+              params.config
+            );
             result = spawnResult;
           } else {
-            throw new Error('Server spawner not available');
+            throw new Error("Server spawner not available");
           }
           break;
 
-        case 'server_status':
+        case "server_status":
           if (this.spawnerManager) {
             result = this.spawnerManager.getStatus();
           } else {
-            throw new Error('Server spawner not available');
+            throw new Error("Server spawner not available");
           }
           break;
 
@@ -407,12 +527,11 @@ export class A2ACommunication extends EventEmitter {
         success: true,
         data: result,
       });
-
     } catch (error) {
       console.error(`[A2A] Request handling failed:`, error);
       await this.sendResponse(message.id, {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
       });
     }
   }
@@ -422,16 +541,25 @@ export class A2ACommunication extends EventEmitter {
    */
   private handleResponse(message: A2AMessage): void {
     const response = message.payload as A2AResponse;
-    const pending = this.pendingRequests.get(response.correlationId || '');
+    const correlationId = response.correlationId;
+    const pending = correlationId
+      ? this.pendingRequests.get(correlationId)
+      : undefined;
 
     if (pending) {
       if (response.success) {
         pending.resolve(response);
       } else {
-        pending.reject(new Error(response.error || 'Request failed'));
+        pending.reject(
+          new Error(response.error || `Request failed: ${correlationId}`)
+        );
       }
-      clearTimeout(pending.timeout);
-      this.pendingRequests.delete(response.correlationId || '');
+      pending.cleanup(); // Use cleanup method to ensure proper resource cleanup
+      this.pendingRequests.delete(correlationId);
+    } else {
+      console.warn(
+        `[A2A] Received response for unknown request: ${correlationId}`
+      );
     }
   }
 
@@ -440,7 +568,7 @@ export class A2ACommunication extends EventEmitter {
    */
   private async handleCommand(message: A2AMessage): Promise<void> {
     // Commands can trigger local actions
-    this.emit('message', message);
+    this.emit("message", message);
   }
 
   /**
@@ -451,7 +579,7 @@ export class A2ACommunication extends EventEmitter {
     const peer = this.peers.get(peerId);
     if (peer) {
       peer.lastSeen = Date.now();
-      peer.status = 'online';
+      peer.status = "online";
     }
   }
 
@@ -472,9 +600,12 @@ export class A2ACommunication extends EventEmitter {
         try {
           // Here you would actually send the message via the transport layer
           // For now, we'll just emit it locally for testing
-          this.emit('message', message);
+          this.emit("message", message);
         } catch (error) {
-          console.error(`[A2A] Failed to process message ${message.id}:`, error);
+          console.error(
+            `[A2A] Failed to process message ${message.id}:`,
+            error
+          );
           // Retry logic could go here
         }
       }
@@ -519,14 +650,14 @@ export class A2ACommunication extends EventEmitter {
     // Clear all timeouts
     for (const pending of this.pendingRequests.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(new Error('Communication cleanup'));
+      pending.reject(new Error("Communication cleanup"));
     }
 
     this.pendingRequests.clear();
     this.messageQueue.length = 0;
     this.peers.clear();
 
-    console.log('[A2A] Communication manager cleaned up');
+    console.log("[A2A] Communication manager cleaned up");
   }
 
   /**
@@ -542,7 +673,7 @@ export class A2ACommunication extends EventEmitter {
       peerCount: this.peers.size,
       pendingRequests: this.pendingRequests.size,
       messageQueueLength: this.messageQueue.length,
-      uptime: Date.now() - (this.config as any).startTime,
+      uptime: Date.now() - this.config.startTime,
     };
   }
 }
@@ -555,7 +686,7 @@ export class A2ACommunicationFactory {
 
   static create(
     config: A2AConfig,
-    mcpServer: UniversalMCPServer,
+    mcpServer: AlsaniaMcp,
     proxyManager?: MCPProxyManager,
     spawnerManager?: ServerSpawnerManager
   ): A2ACommunication {
@@ -563,7 +694,12 @@ export class A2ACommunicationFactory {
       return this.instance;
     }
 
-    this.instance = new A2ACommunication(config, mcpServer, proxyManager, spawnerManager);
+    this.instance = new A2ACommunication(
+      config,
+      mcpServer,
+      proxyManager,
+      spawnerManager
+    );
     return this.instance;
   }
 
@@ -579,4 +715,4 @@ export class A2ACommunicationFactory {
   }
 }
 
-console.log('[A2A Communication] AI-to-AI communication framework loaded');
+console.log("[A2A Communication] AI-to-AI communication framework loaded");

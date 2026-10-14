@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AlsaniaMCP | Client</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      :root {
+        --bg-primary: #0a0f1a;
+        --bg-secondary: #111827;
+        --bg-tertiary: #1e293b;
+        --accent: #10b981;
+        --accent-dim: #059669;
+        --text-primary: #f1f5f9;
+        --text-secondary: #94a3b8;
+        --text-muted: #64748b;
+        --border: #334155;
+        --danger: #ef4444;
+        --success: #10b981;
+        --warning: #f59e0b;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+      .header {
+        background: var(--bg-secondary);
+        border-bottom: 1px solid var(--border);
+        padding: 1rem 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .header h1 {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: var(--accent);
+        letter-spacing: 0.05em;
+      }
+      .header-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--danger);
+        animation: pulse 2s infinite;
+      }
+      .status-dot.connected {
+        background: var(--success);
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+      }
+      .main-container {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 1px;
+        background: var(--border);
+        overflow: hidden;
+      }
+      .sidebar {
+        background: var(--bg-secondary);
+        padding: 1rem;
+        overflow-y: auto;
+      }
+      .sidebar-section {
+        margin-bottom: 1.5rem;
+      }
+      .sidebar-section h3 {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--text-muted);
+        margin-bottom: 0.75rem;
+      }
+      .agent-item {
+        padding: 0.75rem;
+        background: var(--bg-tertiary);
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.15s;
+      }
+      .agent-item:hover {
+        border-color: var(--border);
+      }
+      .agent-item.active {
+        border-color: var(--accent);
+      }
+      .agent-item .name {
+        font-weight: 500;
+        font-size: 0.875rem;
+      }
+      .agent-item .status {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        margin-top: 0.25rem;
+      }
+      .chat-container {
+        background: var(--bg-primary);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+      }
+      .message {
+        max-width: 80%;
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        line-height: 1.5;
+        font-size: 0.875rem;
+      }
+      .message.user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: var(--bg-primary);
+      }
+      .message.assistant {
+        align-self: flex-start;
+        background: var(--bg-tertiary);
+      }
+      .message .meta {
+        font-size: 0.625rem;
+        opacity: 0.7;
+        margin-top: 0.25rem;
+      }
+      .chat-input {
+        padding: 1rem;
+        background: var(--bg-secondary);
+        border-top: 1px solid var(--border);
+        display: flex;
+        gap: 0.5rem;
+      }
+      .chat-input input {
+        flex: 1;
+        padding: 0.75rem 1rem;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text-primary);
+        font-family: inherit;
+        font-size: 0.875rem;
+      }
+      .chat-input input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .chat-input button {
+        padding: 0.75rem 1.5rem;
+        background: var(--accent);
+        border: none;
+        border-radius: 6px;
+        color: var(--bg-primary);
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .chat-input button:hover {
+        background: var(--accent-dim);
+      }
+      .chat-input button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="header">
+      <h1>🌐 ALSANIA_mcp</h1>
+      <div class="header-status">
+        <span class="status-dot" id="status"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </header>
+    <main class="main-container">
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <h3>Active Agents</h3>
+          <div id="agents-list">
+            <div class="agent-item" data-id="echo">
+              <div class="name">Echo</div>
+              <div class="status">Online</div>
+            </div>
+            <div class="agent-item" data-id="aegis">
+              <div class="name">Aegis</div>
+              <div class="status">Ready</div>
+            </div>
+            <div class="agent-item" data-id="cipher">
+              <div class="name">Cipher</div>
+              <div class="status">Standby</div>
+            </div>
+          </div>
+        </div>
+        <div class="sidebar-section">
+          <h3>Tools</h3>
+          <div id="tools-list">
+            <div class="agent-item">
+              <div class="name">memory_search</div>
+              <div class="status">Search memories</div>
+            </div>
+            <div class="agent-item">
+              <div class="name">session_capture</div>
+              <div class="status">Save decisions</div>
+            </div>
+            <div class="agent-item">
+              <div class="name">context_smart</div>
+              <div class="status">Context queries</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <section class="chat-container">
+        <div class="chat-messages" id="messages">
+          <div class="message assistant">
+            Connected to AlsaniaMCP. Select an agent to begin.
+            <div class="meta">System • Just now</div>
+          </div>
+        </div>
+        <form class="chat-input" id="chat-form">
+          <input
+            type="text"
+            id="message-input"
+            placeholder="Message Echo..."
+            autocomplete="off"
+          />
+          <button type="submit" id="send-btn">Send</button>
+        </form>
+      </section>
+    </main>
+    <script>
+      const API_BASE = window.location.origin;
+      let selectedAgent = null;
+      let ws = null;
+
+      // Connect to MCP SSE stream
+      function connectSSE() {
+        const eventSource = new EventSource(`${API_BASE}/agent/sse`);
+
+        eventSource.onopen = () => {
+          updateStatus(true);
+        };
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            handleMessage(data);
+          } catch (e) {
+            console.log("SSE:", event.data);
+          }
+        };
+
+        eventSource.onerror = () => {
+          updateStatus(false);
+          // Fallback to polling
+          setTimeout(() => connectSSE(), 5000);
+        };
+      }
+
+      function connectWS() {
+        ws = new WebSocket(`ws://${window.location.host}/ws`);
+
+        ws.onopen = () => updateStatus(true);
+        ws.onclose = () => {
+          updateStatus(false);
+          setTimeout(connectWS, 3000);
+        };
+        ws.onmessage = (event) => {
+          handleMessage(JSON.parse(event.data));
+        };
+      }
+
+      function updateStatus(connected) {
+        const dot = document.getElementById("status");
+        const text = document.getElementById("status-text");
+        if (connected) {
+          dot.classList.add("connected");
+          text.textContent = "Connected";
+        } else {
+          dot.classList.remove("connected");
+          text.textContent = "Disconnected";
+        }
+      }
+
+      function handleMessage(data) {
+        const messages = document.getElementById("messages");
+        const div = document.createElement("div");
+        div.className = "message assistant";
+        div.textContent =
+          typeof data === "string" ? data : JSON.stringify(data, null, 2);
+        div.innerHTML += `<div class="meta">Agent • ${new Date().toLocaleTimeString()}</div>`;
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      function sendMessage(text) {
+        const messages = document.getElementById("messages");
+        const div = document.createElement("div");
+        div.className = "message user";
+        div.innerHTML = `${text}<div class="meta">You • ${new Date().toLocaleTimeString()}</div>`;
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+
+        // Send to MCP endpoint
+        fetch(`${API_BASE}/mcp`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            method: "tools/call",
+            params: {
+              name: "agent/send_message",
+              arguments: { text, agent: selectedAgent },
+            },
+            id: Date.now(),
+          }),
+        });
+      }
+
+      // Event listeners
+      document.querySelectorAll(".agent-item[data-id]").forEach((item) => {
+        item.addEventListener("click", () => {
+          document
+            .querySelectorAll(".agent-item")
+            .forEach((i) => i.classList.remove("active"));
+          item.classList.add("active");
+          selectedAgent = item.dataset.id;
+        });
+      });
+
+      document.getElementById("chat-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const input = document.getElementById("message-input");
+        const text = input.value.trim();
+        if (text) {
+          sendMessage(text);
+          input.value = "";
+        }
+      });
+
+      // Initialize
+      connectSSE();
+      connectWS();
+    </script>
+  </body>
+</html>

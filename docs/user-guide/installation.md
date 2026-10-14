@@ -10,6 +10,7 @@ Before installing AlsaniaMCP, ensure your system meets these requirements:
 - **npm**: Version 8.x or higher (comes with Node.js)
 - **Git**: For cloning the repository
 - **Docker** (optional): For containerized deployment
+- **Pixi** (optional): For Python environment management (recommended for development)
 
 ### System Requirements
 
@@ -54,6 +55,28 @@ docker pull alsania/mcp-proxy:latest
 
 # Or build from source
 docker build -t alsania/mcp-proxy .
+```
+
+### Method 4: From Source with Pixi (Python Development)
+
+For developers who need Python dependencies (e.g., for the FastAPI router):
+
+```bash
+# Clone the repository
+git clone https://github.com/alsania-dev/alsaniamcp.git
+cd alsaniamcp
+
+# Install Pixi if not already installed
+curl -fsSL https://prefix.dev/install | bash
+
+# Install Python dependencies using Pixi
+pixi install
+
+# Install Node.js dependencies
+npm install
+
+# Build the project
+npm run build
 ```
 
 ## Post-Installation Setup
@@ -123,6 +146,10 @@ After successful installation, proceed to:
 
 1. [Configuration Guide](../user-guide/configuration.md)
 2. [Getting Started](../user-guide/getting-started.md)
+
+For Python development with Pixi, see:
+
+1. [Pixi Setup Guide](../../PIXI_README.md)
 
 ## Uninstalling
 

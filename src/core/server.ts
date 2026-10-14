@@ -34,7 +34,7 @@ interface PromptRegistry {
   };
 }
 
-export class UniversalMCPServer {
+export class AlsaniaMcp {
   private server: Server;
   private toolRegistry: ToolRegistry = {};
   private resourceRegistry: ResourceRegistry = {};
@@ -45,7 +45,7 @@ export class UniversalMCPServer {
     this.server = new Server(
       {
         name: 'AlsaniaMCP',
-        version: '1.0.0',
+        version: '1.0.5',
       },
       {
         capabilities: {
@@ -62,7 +62,7 @@ export class UniversalMCPServer {
   private setupHandlers() {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       const tools: Tool[] = [];
-      
+
       for (const [serverId, serverTools] of Object.entries(this.toolRegistry)) {
         for (const [toolName, toolData] of Object.entries(serverTools)) {
           tools.push({
@@ -81,7 +81,7 @@ export class UniversalMCPServer {
 
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const [serverId, toolName] = request.params.name.split('/');
-      
+
       if (!this.toolRegistry[serverId]?.[toolName]) {
         throw new Error(`Tool ${request.params.name} not found`);
       }
@@ -90,7 +90,7 @@ export class UniversalMCPServer {
       tool.lastUsed = Date.now();
 
       const result = await tool.handler(request.params.arguments);
-      
+
       return {
         content: [
           {
@@ -103,7 +103,7 @@ export class UniversalMCPServer {
 
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
       const resources: any[] = [];
-      
+
       for (const [serverId, serverResources] of Object.entries(this.resourceRegistry)) {
         for (const [resourceUri, resourceData] of Object.entries(serverResources)) {
           resources.push({
@@ -122,7 +122,7 @@ export class UniversalMCPServer {
       const uri = request.params.uri;
       const [serverId, ...resourceParts] = uri.split('://');
       const resourceUri = resourceParts.join('://');
-      
+
       if (!this.resourceRegistry[serverId]?.[resourceUri]) {
         throw new Error(`Resource ${uri} not found`);
       }
@@ -131,7 +131,7 @@ export class UniversalMCPServer {
       resource.lastUsed = Date.now();
 
       const content = await resource.handler();
-      
+
       return {
         contents: [
           {
@@ -145,7 +145,7 @@ export class UniversalMCPServer {
 
     this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
       const prompts: any[] = [];
-      
+
       for (const [serverId, serverPrompts] of Object.entries(this.promptRegistry)) {
         for (const [promptName, promptData] of Object.entries(serverPrompts)) {
           prompts.push({
@@ -161,7 +161,7 @@ export class UniversalMCPServer {
 
     this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
       const [serverId, promptName] = request.params.name.split('/');
-      
+
       if (!this.promptRegistry[serverId]?.[promptName]) {
         throw new Error(`Prompt ${request.params.name} not found`);
       }
@@ -170,7 +170,7 @@ export class UniversalMCPServer {
       prompt.lastUsed = Date.now();
 
       const result = await prompt.handler(request.params.arguments);
-      
+
       return {
         description: prompt.description,
         messages: Array.isArray(result) ? result : [
@@ -260,7 +260,7 @@ export class UniversalMCPServer {
     const now = Date.now();
     for (const [serverId, serverTools] of Object.entries(this.toolRegistry)) {
       for (const [toolName, toolData] of Object.entries(serverTools)) {
-        if (now - toolData.lastUsed > maxAge) {
+        if (now - toolData.lastUsed >= maxAge) {
           this.unregisterTool(serverId, toolName);
         }
       }
@@ -268,7 +268,7 @@ export class UniversalMCPServer {
 
     for (const [serverId, serverResources] of Object.entries(this.resourceRegistry)) {
       for (const [resourceUri, resourceData] of Object.entries(serverResources)) {
-        if (now - resourceData.lastUsed > maxAge) {
+        if (now - resourceData.lastUsed >= maxAge) {
           this.unregisterResource(serverId, resourceUri);
         }
       }
@@ -276,7 +276,7 @@ export class UniversalMCPServer {
 
     for (const [serverId, serverPrompts] of Object.entries(this.promptRegistry)) {
       for (const [promptName, promptData] of Object.entries(serverPrompts)) {
-        if (now - promptData.lastUsed > maxAge) {
+        if (now - promptData.lastUsed >= maxAge) {
           this.unregisterPrompt(serverId, promptName);
         }
       }
@@ -285,7 +285,7 @@ export class UniversalMCPServer {
 
   async callTool(serverId: string, toolName: string, args: any): Promise<any> {
     const fullName = `${serverId}/${toolName}`;
-    
+
     if (!this.toolRegistry[serverId]?.[toolName]) {
       throw new Error(`Tool ${fullName} not found`);
     }
@@ -318,25 +318,9 @@ export class UniversalMCPServer {
     return await prompt.handler(args);
   }
 
-  listTools(): Array<{ serverId: string; toolName: string; schema: any }> {
-    const tools: Array<{ serverId: string; toolName: string; schema: any }> = [];
-    
-    for (const [serverId, serverTools] of Object.entries(this.toolRegistry)) {
-      for (const [toolName, toolData] of Object.entries(serverTools)) {
-        tools.push({
-          serverId,
-          toolName,
-          schema: toolData.schema,
-        });
-      }
-    }
-
-    return tools;
-  }
-
   listResources(): Array<{ serverId: string; resourceUri: string; name: string; description?: string; mimeType?: string }> {
     const resources: Array<any> = [];
-    
+
     for (const [serverId, serverResources] of Object.entries(this.resourceRegistry)) {
       for (const [resourceUri, resourceData] of Object.entries(serverResources)) {
         resources.push({
@@ -348,13 +332,12 @@ export class UniversalMCPServer {
         });
       }
     }
-
     return resources;
   }
 
   listPrompts(): Array<{ serverId: string; promptName: string; description?: string; arguments?: any[] }> {
     const prompts: Array<any> = [];
-    
+
     for (const [serverId, serverPrompts] of Object.entries(this.promptRegistry)) {
       for (const [promptName, promptData] of Object.entries(serverPrompts)) {
         prompts.push({
@@ -365,18 +348,31 @@ export class UniversalMCPServer {
         });
       }
     }
-
     return prompts;
   }
 
   async start() {
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
-    
-    setInterval(() => this.cleanupUnusedTools(), 60000);
+    // For HTTP servers, we don't need to connect to stdio transport
+    // The HTTP gateway will handle the MCP protocol over HTTP
+    console.log('✅ AlsaniaMcp initialized with tools:', this.listTools().length);
+
+    // setInterval(() => this.cleanupUnusedTools(), 60000); // Disabled for debugging
   }
 
   getServer() {
     return this.server;
+  }
+  listTools(): { serverId: string; toolName: string; schema: any }[] {
+    const tools: { serverId: string; toolName: string; schema: any }[] = [];
+    for (const [serverId, serverTools] of Object.entries(this.toolRegistry)) {
+      for (const [toolName, toolData] of Object.entries(serverTools)) {
+        tools.push({
+          serverId,
+          toolName,
+          schema: toolData.schema,
+        });
+      }
+    }
+    return tools;
   }
 }

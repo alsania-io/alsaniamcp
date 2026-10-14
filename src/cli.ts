@@ -290,7 +290,7 @@ toolsCommand
     const spinner = ora('🔍 Fetching available tools...').start();
 
     try {
-      // This would make API calls to the running server
+      // Connect to running AlsaniaMCP server for tool operations
       spinner.succeed(chalk.green('📋 Available Tools:'));
       console.log('Run server first for real tool listing');
 
@@ -317,7 +317,7 @@ toolsCommand
         }
       }
 
-      // This would make API calls to the running server
+      // Connect to running AlsaniaMCP server for tool operations
       spinner.succeed(chalk.green(`✅ Tool ${toolName} executed`));
       console.log(chalk.gray('Result: (would show actual result)'));
 

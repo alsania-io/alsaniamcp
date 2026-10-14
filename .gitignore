@@ -20,3 +20,20 @@ build/
 Thumbs.db
 .codacy/
 .local/
+
+/node_nodules/
+
+# runtime data
+/data/
+*.db
+*.db-shm
+*.db-wal
+mcp.log
+npm-debug.log
+.tmp/
+
+# separate nested project (own repo elsewhere)
+/g-chat/
+
+# old nested git backup
+/.deprecated/g-chat-replit-git-20260930/

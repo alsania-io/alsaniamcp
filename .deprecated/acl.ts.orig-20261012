@@ -1,0 +1,217 @@
+/**
+ * Object-level ACL for AlsaniaMCP.
+ *
+ * Concept adopted from jarvis-registry's ACL service (third-party, Python),
+ * re-implemented in TypeScript with ZERO external dependencies. We do not depend
+ * on jarvis at runtime — this is a port of its model only.
+ *
+ * Model: principals (user/group/public) are granted numeric permission bits
+ * (PermBits) on resources (mcpServer/tool/agent/prompt). Roles are named bit
+ * sets. Enforcement is default-deny for non-public resources.
+ *
+ * See docs/design/sigma-lab-adoption-roadmap.md §7.1.
+ */
+
+export type PrincipalType = 'user' | 'group' | 'public';
+
+export interface Principal {
+  type: PrincipalType;
+  /** Omitted/undefined for 'public'. */
+  id?: string;
+}
+
+export type ResourceType = 'mcpServer' | 'tool' | 'agent' | 'prompt';
+
+export interface Resource {
+  type: ResourceType;
+  id: string;
+}
+
+/** Permission bitmask. Combine with | and test with & . */
+export const PermBits = {
+  NONE: 0,
+  VIEW: 1,
+  CALL: 2,
+  EDIT: 4,
+  ADMIN: 8,
+} as const;
+
+export type PermBit = (typeof PermBits)[keyof typeof PermBits];
+
+export interface Role {
+  id: string;
+  name: string;
+  resourceType: ResourceType;
+  permBits: number;
+}
+
+export interface AclEntry {
+  principal: Principal;
+  resource: Resource;
+  permBits: number;
+  roleId?: string;
+  grantedBy?: string;
+  grantedAt: string; // ISO 8601
+}
+
+/** Key a principal+resource pair for the in-memory index. */
+function pkey(p: Principal): string {
+  return p.type === 'public' ? 'public' : `${p.type}:${p.id}`;
+}
+function rkey(r: Resource): string {
+  return `${r.type}:${r.id}`;
+}
+
+/**
+ * In-memory, zero-dependency ACL store.
+ *
+ * Semantics:
+ * - A principal's effective bits on a resource = union of its own entry,
+ *   its group entries (if any groups are supplied at check time), the `public`
+ *   entry, plus any role's bits.
+ * - `checkPermission` returns true if (effectiveBits & required) === required.
+ * - Default-deny: no matching entry and no public entry => false.
+ */
+export class Acl {
+  private entries: Map<string, AclEntry[]> = new Map(); // rkey -> entries
+  private roles: Map<string, Role> = new Map();
+
+  /** Register a named role (bit set bound to a resource type). */
+  defineRole(role: Role): void {
+    this.roles.set(role.id, role);
+  }
+
+  getRole(id: string): Role | undefined {
+    return this.roles.get(id);
+  }
+
+  /**
+   * Grant (or update) permissions for a principal on a resource.
+   * Bits come from `permBits` and/or a role (union). Returns the stored entry.
+   */
+  grantPermission(
+    principal: Principal,
+    resource: Resource,
+    opts: { permBits?: number; roleId?: string; grantedBy?: string } = {},
+  ): AclEntry {
+    let bits = opts.permBits ?? PermBits.NONE;
+    if (opts.roleId) {
+      const role = this.roles.get(opts.roleId);
+      if (!role) throw new Error(`Unknown role: ${opts.roleId}`);
+      bits |= role.permBits;
+    }
+    if (bits === PermBits.NONE) {
+      throw new Error('grantPermission: permBits or roleId must grant at least one bit');
+    }
+
+    const list = this.entries.get(rkey(resource)) ?? [];
+    const existing = list.find(
+      (e) => pkey(e.principal) === pkey(principal),
+    );
+    if (existing) {
+      existing.permBits = bits;
+      existing.roleId = opts.roleId;
+      return existing;
+    }
+    const entry: AclEntry = {
+      principal,
+      resource,
+      permBits: bits,
+      roleId: opts.roleId,
+      grantedBy: opts.grantedBy,
+      grantedAt: new Date().toISOString(),
+    };
+    list.push(entry);
+    this.entries.set(rkey(resource), list);
+    return entry;
+  }
+
+  /** Revoke a principal's entry on a resource. Returns number removed (0 or 1). */
+  revokePermission(principal: Principal, resource: Resource): number {
+    const k = rkey(resource);
+    const list = this.entries.get(k);
+    if (!list) return 0;
+    const before = list.length;
+    const after = list.filter((e) => pkey(e.principal) !== pkey(principal));
+    if (after.length === 0) this.entries.delete(k);
+    else this.entries.set(k, after);
+    return before - after.length;
+  }
+
+  /**
+   * Effective permission bits for a principal on a resource.
+   * Unions: the principal's own entry, any of `groupIds`, and the public entry.
+   */
+  effectiveBits(
+    principal: Principal,
+    resource: Resource,
+    groupIds: string[] = [],
+  ): number {
+    const list = this.entries.get(rkey(resource));
+    if (!list || list.length === 0) return PermBits.NONE;
+
+    const keys = new Set<string>([pkey(principal), 'public']);
+    for (const g of groupIds) keys.add(`group:${g}`);
+
+    let bits = PermBits.NONE;
+    for (const e of list) {
+      if (keys.has(pkey(e.principal))) bits |= e.permBits;
+    }
+    return bits;
+  }
+
+  /** True if the principal holds ALL bits in `required` on the resource. */
+  checkPermission(
+    principal: Principal,
+    resource: Resource,
+    required: number,
+    groupIds: string[] = [],
+  ): boolean {
+    if (required === PermBits.NONE) return true;
+    const bits = this.effectiveBits(principal, resource, groupIds);
+    return (bits & required) === required;
+  }
+
+  /** All resources of `type` on which the principal holds `required`. */
+  findAccessibleResources(
+    principal: Principal,
+    type: ResourceType,
+    required: number = PermBits.VIEW,
+    groupIds: string[] = [],
+  ): Resource[] {
+    const out: Resource[] = [];
+    const seen = new Set<string>();
+    for (const list of this.entries.values()) {
+      for (const e of list) {
+        if (e.resource.type !== type) continue;
+        const k = rkey(e.resource);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (this.checkPermission(principal, e.resource, required, groupIds)) {
+          out.push(e.resource);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Map resourceKey -> effective bits, for every resource with an entry. */
+  getPermissionsMap(
+    principal: Principal,
+    groupIds: string[] = [],
+  ): Record<string, number> {
+    const map: Record<string, number> = {};
+    for (const list of this.entries.values()) {
+      for (const e of list) {
+        const k = rkey(e.resource);
+        map[k] = this.effectiveBits(principal, e.resource, groupIds);
+      }
+    }
+    return map;
+  }
+
+  /** Raw entries stored for a resource (admin/inspection view). */
+  listResourcePermissions(resource: Resource): AclEntry[] {
+    return [...(this.entries.get(rkey(resource)) ?? [])];
+  }
+}

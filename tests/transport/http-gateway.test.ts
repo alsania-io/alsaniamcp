@@ -1,17 +1,17 @@
 import request from "supertest";
 import express from "express";
 import { HTTPGateway } from "../../src/transport/http-gateway";
-import { UniversalMCPServer } from "../../src/core/server";
+import { AlsaniaMcp } from "../../src/core/server";
 import { MCPProxyManager } from "../../src/proxy/mcp-proxy";
 
 describe("HTTPGateway", () => {
   let gateway: HTTPGateway;
   let app: express.Application;
-  let mcpServer: UniversalMCPServer;
+  let mcpServer: AlsaniaMcp;
   let proxyManager: MCPProxyManager;
 
   beforeEach(() => {
-    mcpServer = new UniversalMCPServer();
+    mcpServer = new AlsaniaMcp();
     proxyManager = new MCPProxyManager(mcpServer);
     gateway = new HTTPGateway(mcpServer, proxyManager, 0); // Use port 0 for auto-assignment
     app = gateway["app"]; // Access private app property for testing
@@ -25,9 +25,11 @@ describe("HTTPGateway", () => {
     test("should return 200 for health endpoint", async () => {
       const response = await request(app).get("/health");
       expect(response.status).toBe(200);
-      expect(response.body).toEqual({
+      expect(response.body).toMatchObject({
         status: "ok",
         timestamp: expect.any(Number),
+        http: true,
+        mcp: true,
       });
     });
   });

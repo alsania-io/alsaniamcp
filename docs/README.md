@@ -57,7 +57,7 @@ This documentation is organized into sections for different audiences and use ca
 
 ## 📋 Key Concepts
 
-### Universal MCP Proxy
+### AlsaniaMCP Proxy
 
 AlsaniaMCP acts as a bridge between AI systems and MCP servers, providing:
 
@@ -72,7 +72,7 @@ AlsaniaMCP acts as a bridge between AI systems and MCP servers, providing:
 ┌─────────────────────────────────────────┐
 │          AlsaniaMCP Server              │
 │  ┌──────────────────────────────────┐   │
-│  │   UniversalMCPServer             │   │
+│  │   AlsaniaMCPServer               │   │
 │  │   - Tool Registry                │   │
 │  │   - Resource Registry            │   │
 │  │   - Prompt Registry              │   │

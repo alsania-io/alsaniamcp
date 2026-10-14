@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AlsaniaMCP Dashboard</title>
+    <link rel="manifest" href="https://progressier.app/5ZOP642ifYO1D3TnKaiv/progressier.json"/>
+    <script defer src="https://progressier.app/5ZOP642ifYO1D3TnKaiv/script.js"></script>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🌐 AlsaniaMCP Dashboard</h1>
+                <p class="tagline">Universal MCP Server with Agentic Framework</p>
+            </div>
+            <div class="header-status">
+                <span id="server-status" class="status-indicator offline">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs">
+            <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+            <button class="tab-btn" data-tab="agents">Agents</button>
+            <button class="tab-btn" data-tab="messages">Messages</button>
+            <button class="tab-btn" data-tab="tools">Tools & Prompts</button>
+            <button class="tab-btn" data-tab="proxy">Proxy Servers</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
+        </nav>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Dashboard Tab -->
+            <section id="dashboard" class="tab-content active">
+                <h2>System Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Agents</h3>
+                        <p class="stat-value" id="stat-agents">0</p>
+                        <p class="stat-label">Active</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Tools</h3>
+                        <p class="stat-value" id="stat-tools">0</p>
+                        <p class="stat-label">Available</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Calls</h3>
+                        <p class="stat-value" id="stat-calls">0</p>
+                        <p class="stat-label">All-time</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Proxy Servers</h3>
+                        <p class="stat-value" id="stat-proxy">0</p>
+                        <p class="stat-label">Connected</p>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h3>Recent Activity</h3>
+                    <div id="activity-log" class="activity-log">
+                        <p class="empty-state">No activity yet</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Agents Tab -->
+            <section id="agents" class="tab-content">
+                <div class="section-header">
+                    <h2>Agent Management</h2>
+                    <button class="btn btn-primary" id="create-agent-btn">+ New Agent</button>
+                </div>
+
+                <!-- Create Agent Form -->
+                <div id="create-agent-form" class="form-container hidden">
+                    <h3>Register New Agent</h3>
+                    <form id="agent-form">
+                        <div class="form-group">
+                            <label for="agent-name">Agent Name *</label>
+                            <input type="text" id="agent-name" placeholder="e.g., DataAnalyzer" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="agent-description">Description</label>
+                            <textarea id="agent-description" placeholder="What does this agent do?"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="agent-model">Model *</label>
+                            <input type="text" id="agent-model" placeholder="e.g., gpt-4, claude-3" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="agent-memory">Memory Database</label>
+                            <input type="text" id="agent-memory" placeholder="Connection string or identifier">
+                        </div>
+                        <div class="form-group">
+                            <label for="agent-prompt">System Prompt</label>
+                            <textarea id="agent-prompt" placeholder="System instructions for the agent"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="agent-tools">Tools (comma-separated)</label>
+                            <input type="text" id="agent-tools" placeholder="tool1, tool2, tool3">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="agent-tokens">Max Tokens</label>
+                                <input type="number" id="agent-tokens" min="1" placeholder="2048">
+                            </div>
+                            <div class="form-group">
+                                <label for="agent-temperature">Temperature (0-1)</label>
+                                <input type="number" id="agent-temperature" min="0" max="1" step="0.1" placeholder="0.7">
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Register Agent</button>
+                            <button type="button" class="btn btn-secondary" id="cancel-agent-form">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Agents List -->
+                <div id="agents-list" class="agents-list">
+                    <p class="empty-state">No agents registered yet</p>
+                </div>
+            </section>
+
+            <!-- Messages Tab -->
+            <section id="messages" class="tab-content">
+                <div class="section-header">
+                    <h2>Agent Messages & Triggers</h2>
+                    <div class="header-controls">
+                        <select id="message-agent-select" class="form-select">
+                            <option value="">Select agent...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Trigger Words Section -->
+                <div class="section">
+                    <h3>🎯 Wake Triggers (Keyword/Phrase)</h3>
+                    <div class="trigger-input-group">
+                        <input type="text" id="trigger-phrase" placeholder="e.g., @AgentName, hey bob, wake up">
+                        <select id="trigger-signal" class="form-select">
+                            <option value="silent">Silent</option>
+                            <option value="visual">Visual Signal</option>
+                            <option value="sound">Sound Alert</option>
+                            <option value="all">All Signals</option>
+                        </select>
+                        <label style="display: flex; align-items: center; gap: 0.5rem;">
+                            <input type="checkbox" id="trigger-case-sensitive"> Case Sensitive
+                        </label>
+                        <button class="btn btn-primary" id="add-trigger-btn">Add Trigger</button>
+                    </div>
+                    <div id="triggers-list" class="triggers-list">
+                        <p class="empty-state">No triggers configured. Select an agent first.</p>
+                    </div>
+                </div>
+
+                <!-- Messages Section -->
+                <div class="section">
+                    <h3>💬 Messages & Storage</h3>
+                    <div class="message-tabs">
+                        <button class="message-tab-btn active" data-msg-type="all">All Messages</button>
+                        <button class="message-tab-btn" data-msg-type="unread">Unread</button>
+                        <button class="message-tab-btn" data-msg-type="private">Private</button>
+                    </div>
+                    <div class="message-input-group">
+                        <input type="text" id="msg-sender" placeholder="From (sender)">
+                        <textarea id="msg-content" placeholder="Message content..."></textarea>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <label><input type="checkbox" id="msg-private"> Private</label>
+                            <label><input type="checkbox" id="msg-unread" checked> Unread</label>
+                            <button class="btn btn-primary" id="store-msg-btn">Store Message</button>
+                        </div>
+                    </div>
+                    <div id="messages-list" class="messages-list">
+                        <p class="empty-state">No messages. Select an agent first.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tools & Prompts Tab -->
+            <section id="tools" class="tab-content">
+                <h2>Tools & Prompts</h2>
+                <div class="tool-tabs">
+                    <button class="tool-tab-btn active" data-type="tools">Tools</button>
+                    <button class="tool-tab-btn" data-type="prompts">Prompts</button>
+                </div>
+                <div id="tools-list" class="tools-list">
+                    <p class="empty-state">Loading tools...</p>
+                </div>
+                <div id="prompts-list" class="tools-list hidden">
+                    <p class="empty-state">Loading prompts...</p>
+                </div>
+            </section>
+
+            <!-- Proxy Servers Tab -->
+            <section id="proxy" class="tab-content">
+                <div class="section-header">
+                    <h2>Proxy Servers</h2>
+                    <button class="btn btn-primary" id="connect-proxy-btn">+ Connect Server</button>
+                </div>
+
+                <!-- Connect Proxy Form -->
+                <div id="connect-proxy-form" class="form-container hidden">
+                    <h3>Connect to MCP Server</h3>
+                    <form id="proxy-form">
+                        <div class="form-group">
+                            <label for="proxy-id">Server ID *</label>
+                            <input type="text" id="proxy-id" placeholder="e.g., github-server" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="proxy-transport">Transport *</label>
+                            <select id="proxy-transport" required>
+                                <option value="">Select transport...</option>
+                                <option value="stdio">STDIO (Local)</option>
+                                <option value="http">HTTP (Remote)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="proxy-endpoint">Endpoint/Command *</label>
+                            <input type="text" id="proxy-endpoint" placeholder="http://localhost:3000/mcp or /path/to/binary" required>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">Connect</button>
+                            <button type="button" class="btn btn-secondary" id="cancel-proxy-form">Cancel</button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Proxy Servers List -->
+                <div id="proxy-list" class="proxy-list">
+                    <p class="empty-state">No proxy servers connected</p>
+                </div>
+            </section>
+
+            <!-- Settings Tab -->
+            <section id="settings" class="tab-content">
+                <div class="section-header">
+                    <h2>GChat Settings</h2>
+                </div>
+
+                <!-- Chat Storage Setting -->
+                <div class="section">
+                    <h3>💾 Chat Log Storage</h3>
+                    <div class="form-group">
+                        <label for="chat-storage-type">Storage Type:</label>
+                        <select id="chat-storage-type" class="form-select">
+                            <option value="internal">Internal Memory (Default)</option>
+                            <option value="eme">External - EME Memory Engine</option>
+                        </select>
+                        <p class="form-help">
+                            <strong>Internal:</strong> Store chat logs in AlsaniaMCP memory (resets on restart)<br>
+                            <strong>EME:</strong> Store chat logs persistently in Echo Memory Engine
+                        </p>
+                    </div>
+
+                    <!-- EME Connection Settings (shown when EME selected) -->
+                    <div id="eme-settings" class="form-container hidden">
+                        <h4>EME Connection Settings</h4>
+                        <div class="form-group">
+                            <label for="eme-transport">Transport Type:</label>
+                            <select id="eme-transport" class="form-select">
+                                <option value="stdio">STDIO (Spawn as subprocess)</option>
+                                <option value="http">HTTP (Connect to running server)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="eme-endpoint">Endpoint/Command:</label>
+                            <input type="text" id="eme-endpoint" class="form-input"
+                                   placeholder="node /path/to/eme/dist/index.js or http://localhost:8048">
+                        </div>
+                        <div class="form-group">
+                            <label for="eme-namespace">EME Namespace:</label>
+                            <input type="text" id="eme-namespace" class="form-input"
+                                   value="gchat-conversations" placeholder="Namespace for chat logs">
+                        </div>
+                        <button class="btn btn-primary" id="test-eme-btn">Test EME Connection</button>
+                    </div>
+
+                    <div class="form-actions">
+                        <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+                        <button class="btn btn-secondary" id="reset-settings-btn">Reset to Defaults</button>
+                    </div>
+                </div>
+
+                <!-- Current Settings Status -->
+                <div class="section">
+                    <h3>📊 Current Configuration</h3>
+                    <div id="current-settings" class="settings-status">
+                        <p class="empty-state">Loading settings...</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Scripts -->
+    <script src="/app.js"></script>
+    <script src="/agents.js"></script>
+    <script src="/tools.js"></script>
+</body>
+</html>

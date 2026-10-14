@@ -80,7 +80,7 @@ alsaniamcp servers status math-server
    npm install
    ```
 
-### MCP Server Connection Issues
+### A2A Communication Issues\n\n**Symptoms**: Server crashes on startup with \"Message timeout\" errors or A2A communication failures\n\n**Possible Causes & Solutions:**\n\n1. **Gateway connection timeout on startup**:\n\n   ```\n   Error: Message timeout: a2a-xxxxxxxxx\n   ```\n\n   **Solution**: The server now handles gateway connection failures gracefully. If alsania-gateway is unavailable, the server will start successfully and attempt connection in the background.\n\n   ```bash\n   # Check A2A communication status\n   alsaniamcp a2a status\n\n   # List connected peers\n   alsaniamcp a2a peers\n\n   # Manually connect to gateway if needed\n   alsaniamcp a2a connect --endpoint http://localhost:8052 --peer-id gateway --peer-name \"Alsania Gateway\"\n   ```\n\n2. **Missing A2A peers**:\n\n   ```bash\n   # Verify required peers are running\n   alsaniamcp a2a required-peers\n\n   # Check peer connectivity\n   alsaniamcp a2a test-peer mcp-superassistant\n\n   # Restart missing peers\n   alsaniamcp servers restart mcp-superassistant\n   ```\n\n3. **A2A configuration issues**:\n\n   ```bash\n   # Validate A2A configuration\n   alsaniamcp config validate --section a2a\n\n   # Check A2A timeout settings\n   alsaniamcp config get a2a.timeout\n\n   # Adjust timeout if needed\n   alsaniamcp config set a2a.timeout 60000\n   ```\n\n### MCP Server Connection Issues
 
 **Symptoms**: MCP servers show as "error" or "inactive"
 

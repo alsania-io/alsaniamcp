@@ -3,13 +3,22 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig, ServerInstance } from '../types/index.js';
-import { UniversalMCPServer } from '../core/server.js';
+import { AlsaniaMcp } from '../core/server.js';
+import { Acl, PermBits, Principal } from '../auth/acl.js';
+import { ToolDiscoveryIndex } from '../discovery/tool-index.js';
+import { Tracer } from '../observability/tracer.js';
 
 export class MCPProxyManager {
   private instances: Map<string, ServerInstance> = new Map();
-  private mcpServer: UniversalMCPServer;
+  private mcpServer: AlsaniaMcp;
+  /** Optional object-level ACL. Enforcement is opt-in (skipped if no entries). */
+  public acl?: Acl;
+  /** Live tool discovery index — populated as tools register (jarvis port). */
+  public readonly discovery = new ToolDiscoveryIndex();
+  /** Span tracer — one span per proxied tool call (jarvis OTel concept port). */
+  public readonly tracer = new Tracer();
 
-  constructor(mcpServer: UniversalMCPServer) {
+  constructor(mcpServer: AlsaniaMcp) {
     this.mcpServer = mcpServer;
   }
 
@@ -45,7 +54,7 @@ export class MCPProxyManager {
 
   private async connectStdio(instance: ServerInstance): Promise<void> {
     const { command, args = [] } = instance.config;
-    
+
     if (!command) {
       throw new Error('STDIO transport requires a command');
     }
@@ -72,7 +81,7 @@ export class MCPProxyManager {
 
   private async connectHTTP(instance: ServerInstance): Promise<void> {
     const { endpoint } = instance.config;
-    
+
     if (!endpoint) {
       throw new Error('HTTP transport requires an endpoint');
     }
@@ -100,12 +109,11 @@ export class MCPProxyManager {
       throw new Error(`Server ${serverId} not connected`);
     }
 
-    const { tools } = await instance.client.request(
-      { method: 'tools/list' },
-      {} as any
-    );
+    const { tools } = await instance.client.listTools();
 
     for (const tool of tools || []) {
+      // Index for natural-language discovery (jarvis concept port).
+      this.discovery.add(serverId, tool.name, tool.description ?? '');
       this.mcpServer.registerTool(
         serverId,
         tool.name,
@@ -120,10 +128,7 @@ export class MCPProxyManager {
     }
 
     try {
-      const { resources } = await instance.client.request(
-        { method: 'resources/list' },
-        {} as any
-      );
+      const { resources } = await instance.client.listResources();
 
       for (const resource of resources || []) {
         this.mcpServer.registerResource(
@@ -137,13 +142,10 @@ export class MCPProxyManager {
           resource.mimeType
         );
       }
-    } catch {}
+    } catch { }
 
     try {
-      const { prompts } = await instance.client.request(
-        { method: 'prompts/list' },
-        {} as any
-      );
+      const { prompts } = await instance.client.listPrompts();
 
       for (const prompt of prompts || []) {
         this.mcpServer.registerPrompt(
@@ -156,24 +158,59 @@ export class MCPProxyManager {
           prompt.arguments
         );
       }
-    } catch {}
+    } catch { }
   }
 
-  private async callRemoteTool(serverId: string, toolName: string, args: any): Promise<any> {
+  /**
+   * Public entry to call a proxied tool AS a given principal, enforcing ACL.
+   * Callers with an authenticated identity should prefer this over the
+   * registered handler path (which defaults to the `public` principal).
+   */
+  async callToolAs(
+    serverId: string,
+    toolName: string,
+    args: any,
+    principal: Principal,
+  ): Promise<any> {
+    return this.callRemoteTool(serverId, toolName, args, principal);
+  }
+
+  private async callRemoteTool(
+    serverId: string,
+    toolName: string,
+    args: any,
+    principal: Principal = { type: 'public' },
+  ): Promise<any> {
     const instance = this.instances.get(serverId);
     if (!instance?.client) {
       throw new Error(`Server ${serverId} not connected`);
     }
 
-    const result = await instance.client.request(
+    // Object-level ACL (opt-in): enforce CALL only when entries exist for
+    // either the server or the specific tool. Preserves open behavior otherwise.
+    if (this.acl) {
+      const serverRes = { type: 'mcpServer' as const, id: serverId };
+      const toolRes = { type: 'tool' as const, id: `${serverId}/${toolName}` };
+      const hasEntries =
+        this.acl.listResourcePermissions(serverRes).length > 0 ||
+        this.acl.listResourcePermissions(toolRes).length > 0;
+      if (hasEntries && !this.acl.checkPermission(principal, toolRes, PermBits.CALL)) {
+        throw new Error(`Forbidden: ${principal.type}${principal.id ? ':' + principal.id : ''} lacks CALL on ${serverId}/${toolName}`);
+      }
+    }
+
+    const result = await this.tracer.withSpan(
+      `mcp.callTool ${serverId}/${toolName}`,
       {
-        method: 'tools/call',
-        params: {
+        serverId,
+        toolName,
+        principal: `${principal.type}${principal.id ? ':' + principal.id : ''}`,
+      },
+      () =>
+        instance.client!.callTool({
           name: toolName,
           arguments: args,
-        },
-      },
-      {} as any
+        }),
     );
 
     return result;
@@ -185,13 +222,7 @@ export class MCPProxyManager {
       throw new Error(`Server ${serverId} not connected`);
     }
 
-    const result = await instance.client.request(
-      {
-        method: 'resources/read',
-        params: { uri },
-      },
-      {} as any
-    );
+    const result = await instance.client.readResource({ uri });
 
     return result;
   }
@@ -202,16 +233,10 @@ export class MCPProxyManager {
       throw new Error(`Server ${serverId} not connected`);
     }
 
-    const result = await instance.client.request(
-      {
-        method: 'prompts/get',
-        params: {
-          name: promptName,
-          arguments: args,
-        },
-      },
-      {} as any
-    );
+    const result = await instance.client.getPrompt({
+      name: promptName,
+      arguments: args,
+    });
 
     return result;
   }

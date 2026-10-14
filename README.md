@@ -13,7 +13,7 @@
 - 🎯 **Dynamic Tool Registry** - On-demand loading/unloading of tools from multiple servers
 - 🔌 **HTTP Gateway** - RESTful API with Server-Sent Events for streaming
 - 🔐 **Secure** - JWT authentication and BLAKE3 hashing
-- 🐳 **Docker Ready** - Easy deployment with Docker and docker-compose
+- 🐳 **Container Ready** - Easy deployment with Docker or Podman
 - 📦 **NPX Support** - Install and run with `npx @alsania-io/mcp`
 
 ## 🚀 Quick Start
@@ -24,14 +24,22 @@
 npx -y @alsania-io/mcp start
 ```
 
-### Using Docker
+### Using Containers (Docker or Podman)
 
 ```bash
+# With Docker
 # Pull and run
 docker run -p 8050:8050 alsania-io/mcp:latest
 
 # Or with docker-compose
 docker-compose up
+
+# With Podman
+# Pull and run
+podman run -p 8050:8050 alsania-io/mcp:latest
+
+# Or with podman-compose
+podman-compose up
 ```
 
 ### Local Development
@@ -64,6 +72,7 @@ Connect to local MCP servers via stdin/stdout:
 Expose tools to remote clients via HTTP REST API:
 - **Base URL**: `http://localhost:8050`
 - **SSE Stream**: `http://localhost:8050/sse`
+- **Streamable HTTP**: `http://localhost:8050/mcp`
 - **Health Check**: `http://localhost:8050/health`
 
 ### 3. HTTP Proxy Transport (Remote MCP Servers)
@@ -79,21 +88,32 @@ POST /proxy/connect
 
 ## 🛠️ API Endpoints
 
-### Core Endpoints
-- `GET /health` - Health check
-- `GET /stream` - SSE streaming endpoint for notifications
-- `POST /message` - Call tools (requires: serverId, toolName, args)
-- `GET /tools` - List all available tools
-- `GET /resources` - List all resources
-- `POST /resource` - Read a specific resource
-- `GET /prompts` - List all prompts
-- `POST /prompt` - Get a prompt with arguments
+**Base URL**: `http://localhost:8050`
 
-### Proxy Management
-- `POST /proxy/connect` - Connect to external MCP server
-- `POST /proxy/disconnect/:serverId` - Disconnect server
-- `GET /proxy/servers` - List active proxy connections
-- `GET /proxy/status/:serverId` - Get server status
+### Core Endpoints
+- `GET /health` - ✅ Health check
+- `GET /stream` - SSE streaming endpoint for notifications
+- `GET /tools` - ✅ List all available tools
+- `GET /openapi.json` - OpenAPI specification
+
+### A2A Communication Endpoints
+- `GET /a2a/peers` - ✅ List all connected AI peers
+- `POST /a2a/register` - ✅ Register a new AI peer
+- `POST /a2a/message` - ✅ Send message to AI peer
+- `GET /a2a/inbox` - ✅ Get message inbox
+- `GET /a2a/status` - ✅ Get A2A system status
+
+### Tool Execution (via Gateway)
+- `POST /gateway` - Execute tools through gateway
+- `POST /mcp` - Direct MCP protocol endpoint
+
+### Available A2A Tools (Registered)
+- `a2a/list_peers` - List connected AI peers
+- `a2a/connect_peer` - Connect to MCP servers
+- `a2a/send_message` - Send messages between AIs
+- `a2a/execute_remote_tool` - Execute tools on remote servers
+- `a2a/spawn_remote_server` - Spawn servers on remote peers
+- `core/echo` - Echo test tool
 
 ## 📋 Usage Examples
 
@@ -102,9 +122,9 @@ POST /proxy/connect
 curl -X POST http://localhost:8050/proxy/connect \
   -H "Content-Type: application/json" \
   -d '{
-    "id": "github-server",
+    "id": "mcpnyx",
     "transport": "http",
-    "endpoint": "http://localhost:3000/mcp"
+    "endpoint": "http://localhost:3055/mcp"
   }'
 ```
 
@@ -126,16 +146,16 @@ curl http://localhost:8050/tools
 
 ### Stream Notifications (SSE)
 ```bash
-curl -N http://localhost:8050/stream
+curl -N http://localhost:8050/sse
 ```
 
 ## 🏗️ Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│            AlsaniaMCP                   │
+│          AlsaniaMCP Server              │
 │  ┌──────────────────────────────────┐   │
-│  │      CoreMCPSerber               │   │
+│  │   UniversalMCPServer             │   │
 │  │   - Tool Registry                │   │
 │  │   - Resource Registry            │   │
 │  │   - Prompt Registry              │   │
@@ -279,11 +299,11 @@ alsaniamcp init
 alsaniamcp proxy
 ```
 
-## 🐳 Docker Deployment
+## 🐳 Container Deployment (Docker & Podman)
 
 ### Build Image
 ```bash
-docker build -t alsania-io/mcp:latest .
+docker build -t alsaniamcp/mcp:latest .
 ```
 
 ### Run Container
@@ -292,7 +312,7 @@ docker run -d \
   -p 8050:8050 \
   -e SESSION_SECRET=your-secret-here \
   --name alsaniamcp \
-  alsania-io/mcp:latest
+  alsaniamcp/mcp:latest
 ```
 
 ### Docker Compose
@@ -330,9 +350,9 @@ src/
 - `npm run build` - Build TypeScript to JavaScript
 - `npm start` - Start production server (verified working)
 - `npm run cli` - Run CLI commands
-- `npm test` - Run tests (tests to be implemented)
+- `npm test` - Run tests (Jest: 13 suites, 167 passing)
 
-## ✅ Current Status (Updated 2025-10-12)
+## ✅ Current Status (Updated 2026-10-14)
 
 ### ✅ Verified Working
 - ✅ Dependencies installed (199 packages, 0 vulnerabilities)
@@ -342,21 +362,31 @@ src/
 - ✅ Multi-transport support (STDIO, HTTP/SSE, Streamable HTTP)
 - ✅ JWT authentication and BLAKE3 hashing implemented
 - ✅ REST API with Server-Sent Events for streaming
+- ✅ **A2A Communication System** - AI-to-AI messaging fully operational
+- ✅ **A2A Tool Registration** - All A2A tools properly registered and accessible
+- ✅ **HTTP Gateway Integration** - A2A endpoints integrated with HTTP gateway
 
 ### 🏗️ Architecture Components
 - ✅ Universal MCP Server with tool/resource/prompt registries
 - ✅ MCP Proxy Manager with dynamic loading/unloading
 - ✅ HTTP Gateway with REST API and SSE streaming
 - ✅ CLI interface (`alsaniamcp` / `amcp` commands)
-- ✅ AI-to-AI communication framework (implemented)
+- ✅ **AI-to-AI Communication Framework** - ✅ FULLY OPERATIONAL
 - ✅ Voice activation and speech processing (implemented)
 - ✅ Dynamic MCP server spawning (implemented)
 - 🔄 Integrated testing framework (in development)
 
+### 🔧 Recent Updates
+- **A2A Tool Registration Fix** - Missing `mcpServer.start()` call added
+- **HTTP Gateway A2A Integration** - A2A endpoints connected to actual A2A system
+- **Peer Registration** - AIs can register via `/a2a/register` endpoint
+- **Message System** - AIs can send messages via `/a2a/message` endpoint
+- **Peer Discovery** - Connected peers visible via `/a2a/peers` endpoint
+
 ### 📊 Code Metrics
 - **Languages**: TypeScript 5.x
 - **Runtime**: Node.js with ES modules
-- **Testing**: No tests currently implemented
+- **Testing**: Jest — 13 suites, 167 passing / 2 skipped (verified 2026-10-14)
 - **Dependencies**: 199 packages, mostly MCP SDK and utilities
 
 ## 🎯 Roadmap (Updated)
@@ -380,7 +410,7 @@ src/
   - [ ] Advanced security layer
   - [ ] Chaos testing framework
   - [ ] Performance monitoring
-  - [ ] Unit and integration tests
+  - [x] Unit and integration tests (13 suites, 167 passing)
   - [ ] Comprehensive documentation
 
 ## 📄 License

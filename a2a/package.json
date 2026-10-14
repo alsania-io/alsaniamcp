@@ -1,0 +1,59 @@
+{
+  "name": "@alsania-io/mcp",
+  "version": "1.1.0",
+  "description": "MCP server for Alsania I/O — A2A communication, agent identity, HITL escalation, and prompt injection detection",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "alsaniamcp": "dist/index.js",
+    "amcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "alsaniamcp",
+    "a2a",
+    "agent-to-agent",
+    "agent-identity",
+    "hitl",
+    "human-in-the-loop",
+    "prompt-injection",
+    "security",
+    "verification",
+    "trust"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Alsania I/O",
+  "license": "MIT",
+  "homepage": "https://alsania-io.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alsania-dev/alsaniamcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alsania-dev/alsaniamcp/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "express": "^4.21.0",
+    "node-fetch": "^3.3.2",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}

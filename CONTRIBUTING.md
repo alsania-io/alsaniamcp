@@ -4,7 +4,7 @@ Welcome! We're excited that you're interested in contributing to AlsaniaMCP. Thi
 
 ## 🏗️ Project Overview
 
-AlsaniaMCP is a universal Model Context Protocol (MCP) server that acts as a 2-way proxy between AI systems and MCP servers. It provides dynamic tool registry, multi-transport support, AI-to-AI communication, and voice activation capabilities.
+AlsaniaMCP is a universal Model Context Protocol (MCP) server that acts as a 2-way proxy between AI systems and MCP servers. It provides dynamic tool aggregator, multi-transport support, AI-to-AI communication, and voice activation capabilities.
 
 ## 🚀 Quick Start for Contributors
 

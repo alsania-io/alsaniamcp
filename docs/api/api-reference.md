@@ -12,18 +12,137 @@ This comprehensive guide covers all APIs provided by AlsaniaMCP, including REST 
 
 ## REST API
 
-Base URL: `http://localhost:3000/api` (configurable)
+**Base URL**: `http://localhost:8050`
 
-### Authentication
+**Note**: This documentation reflects the current implementation. Some endpoints may differ from planned architecture.
 
-All API endpoints support authentication via:
+### Core Endpoints
 
-```bash
-# API Key
-curl -H "X-API-Key: YOUR_API_KEY" http://localhost:3000/api/status
+#### GET /health
+Get server health status
 
-# JWT Token
-curl -H "Authorization: Bearer YOUR_JWT_TOKEN" http://localhost:3000/api/status
+**Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": 1761737500855
+}
+```
+
+#### GET /tools
+List all available tools
+
+**Response:**
+```json
+{
+  "tools": [
+    {
+      "serverId": "a2a",
+      "toolName": "list_peers",
+      "schema": {
+        "description": "List all connected A2A communication peers",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      }
+    }
+  ]
+}
+```
+
+### A2A Communication Endpoints
+
+#### GET /a2a/peers
+List all connected AI peers
+
+**Response:**
+```json
+{
+  "success": true,
+  "peers": [
+    {
+      "id": "chatgpt-001",
+      "name": "ChatGPT Assistant",
+      "capabilities": ["reasoning", "code_generation"],
+      "status": "online",
+      "lastSeen": 1761737151655
+    }
+  ],
+  "count": 1
+}
+```
+
+#### POST /a2a/register
+Register a new AI peer
+
+**Request:**
+```json
+{
+  "peerId": "chatgpt-001",
+  "peerName": "ChatGPT Assistant",
+  "capabilities": ["reasoning", "code_generation"],
+  "status": "online"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "peerId": "chatgpt-001",
+  "message": "Peer ChatGPT Assistant registered successfully"
+}
+```
+
+#### POST /a2a/message
+Send message to AI peer
+
+**Request:**
+```json
+{
+  "to": "chatgpt-001",
+  "message": "Hello from DeepSeek!",
+  "type": "event",
+  "priority": "normal"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "messageId": "a2a-1761737151655-xd30qim2u",
+  "message": "Message sent successfully"
+}
+```
+
+#### GET /a2a/status
+Get A2A system status
+
+**Response:**
+```json
+{
+  "success": true,
+  "status": {
+    "peerCount": 1,
+    "pendingRequests": 0,
+    "messageQueueLength": 0,
+    "uptime": 433551
+  }
+}
+```
+
+#### GET /a2a/inbox
+Get message inbox (real-time via SSE)
+
+**Response:**
+```json
+{
+  "success": true,
+  "messages": [],
+  "message": "Message inbox - real-time messages are handled via SSE"
+}
 ```
 
 ### Server Management

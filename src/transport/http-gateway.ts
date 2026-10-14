@@ -1,178 +1,1594 @@
-import express, { Request, Response } from 'express';
-import { GatewayRoute } from '../types/index.js';
-import { UniversalMCPServer } from '../core/server.js';
-import { MCPProxyManager } from '../proxy/mcp-proxy.js';
-import jwt from 'jsonwebtoken';
+import express, { Request, Response } from "express";
+import path from "path";
+import fs from "fs";
+import { GatewayRoute } from "../types/index.js";
+import { AlsaniaMcp } from "../core/server.js";
+import { MCPProxyManager } from "../proxy/mcp-proxy.js";
+import { A2ACommunication, MessageType, Peer } from "../communication/a2a.js";
+import { Acl, PermBits, Principal } from "../auth/acl.js";
+import jwt from "jsonwebtoken";
+
+interface ApiKeyInfo {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastUsed?: number;
+}
 
 export class HTTPGateway {
-  private app: express.Application;
+  public app: express.Application;
   private routes: Map<string, GatewayRoute> = new Map();
-  private mcpServer: UniversalMCPServer;
+  private mcpServer: AlsaniaMcp;
   private proxyManager: MCPProxyManager;
+  private a2a: A2ACommunication;
   private port: number;
+  private gatewayUrl: string;
+  private apiKeys: Map<string, ApiKeyInfo> = new Map();
+  private messageStore: Map<string, any[]> = new Map();
+  /** Object-level ACL. Public read-only by default; grant CALL per server/tool. */
+  public acl: Acl = new Acl();
 
-  constructor(mcpServer: UniversalMCPServer, proxyManager: MCPProxyManager, port: number = 5050) {
+  constructor(
+    mcpServer: AlsaniaMcp,
+    proxyManager: MCPProxyManager,
+    a2a: A2ACommunication,
+    port: number = 8050,
+    apiKeys: string[] = [],
+  ) {
     this.app = express();
     this.mcpServer = mcpServer;
     this.proxyManager = proxyManager;
+    this.a2a = a2a;
     this.port = port;
+    this.gatewayUrl = `http://localhost:${port}`; // Use own port as gateway
+    // Initialize API keys from array
+    this.apiKeys = new Map();
+    for (const key of apiKeys) {
+      this.apiKeys.set(key, {
+        id: key.slice(0, 8),
+        name: "preconfigured",
+        createdAt: Date.now(),
+      });
+    }
     this.setupMiddleware();
     this.setupRoutes();
+    // No external gateway connection needed - we are the gateway
+    console.log(`✅ HTTP Gateway initialized on port ${port} (self-contained)`);
   }
+
+  // No external gateway connection needed - AlsaniaMCP is self-contained
+  // HTTP Gateway functionality is built-in, not dependent on external service
 
   private setupMiddleware() {
     this.app.use(express.json());
-    
+
+    // Serve GUI static files - using process.cwd() instead of __dirname for ES modules
+    const staticPath = path.join(process.cwd(), "static/gui");
+    this.app.use("/gui", express.static(staticPath));
+
+    // Serve client page (public)
+    const clientPath = path.join(process.cwd(), "static/client");
+    this.app.use("/client", express.static(clientPath));
+
+    // Serve admin dashboard (protected)
+    const adminPath = path.join(process.cwd(), "static/admin");
+    this.app.use("/admin", express.static(adminPath));
+
+    // Redirect root to GUI
+    this.app.get("/", (req, res) => res.redirect("/gui"));
+
     this.app.use((req, res, next) => {
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET, POST, PUT, DELETE, OPTIONS",
+      );
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-API-Key",
+      );
       next();
     });
   }
 
+  private authMiddleware() {
+    return (req: Request, res: Response, next: any) => {
+      const apiKey = req.headers["x-api-key"] as string;
+
+      if (!apiKey || !this.apiKeys.has(apiKey)) {
+        return res.status(401).json({
+          error: "Invalid or missing API key",
+          message: "Please provide a valid X-API-Key header",
+        });
+      }
+
+      // Update last used timestamp
+      const keyInfo = this.apiKeys.get(apiKey);
+      if (keyInfo) {
+        keyInfo.lastUsed = Date.now();
+        this.apiKeys.set(apiKey, keyInfo);
+      }
+
+      next();
+    };
+  }
+
   private setupRoutes() {
-    this.app.get('/health', (req, res) => {
-      res.json({ status: 'ok', timestamp: Date.now() });
+    // Agent card endpoint (public, no auth)
+    this.app.get("/.well-known/agent-card.json", (req, res) => {
+      const publicUrl =
+        process.env.PUBLIC_URL || "https://sigma-lm.taila22628.ts.net";
+      res.json({
+        name: "Aegis",
+        description:
+          "Alsania's strategic guardian and technical executor. Handles A2A communication, tool orchestration, and agent management.",
+        version: "1.0.0",
+        url: publicUrl,
+        capabilities: {
+          streaming: true,
+          pushNotifications: false,
+          tools: true,
+          resources: true,
+          prompts: true,
+        },
+        skills: [
+          {
+            name: "agent_management",
+            description: "Register, list, and manage A2A agents",
+          },
+          {
+            name: "tool_execution",
+            description: "Execute MCP tools from the registry",
+          },
+          {
+            name: "task_management",
+            description: "Create and manage tasks across agents",
+          },
+          {
+            name: "memory_management",
+            description: "Store and retrieve agent memories",
+          },
+          {
+            name: "communication",
+            description: "Send messages between agents",
+          },
+        ],
+        defaultInputModes: ["text", "json"],
+        defaultOutputModes: ["text", "json"],
+        securitySchemes: {
+          apiKey: {
+            type: "apiKey",
+            name: "X-API-Key",
+            in: "header",
+          },
+        },
+      });
     });
 
-    this.app.get('/stream', this.handleSSE.bind(this));
-
-    this.app.post('/message', async (req, res) => {
+    // Register endpoint - create new API keys (public)
+    this.app.post("/register", async (req, res) => {
       try {
-        const { serverId, toolName, args } = req.body;
-        
-        const result = await this.mcpServer.callTool(serverId, toolName, args);
-        
-        res.json({ success: true, result });
+        const { name } = req.body;
+        if (!name) {
+          return res.status(400).json({ error: "Name is required" });
+        }
+
+        const crypto = await import("crypto");
+        const apiKey = crypto.randomBytes(32).toString("hex");
+        this.apiKeys.set(apiKey, {
+          id: apiKey.slice(0, 8),
+          name,
+          createdAt: Date.now(),
+        });
+
+        res.json({
+          success: true,
+          api_key: apiKey,
+          name,
+          message: "API key created successfully. Keep it secure!",
+        });
       } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ error: error.message });
       }
     });
 
-    this.app.get('/tools', async (req, res) => {
+    // Health endpoint (public)
+    this.app.get("/health", (req, res) => {
+      res.json({
+        status: "ok",
+        timestamp: Date.now(),
+        http: true,
+        mcp: true,
+        uptime: process.uptime(),
+      });
+    });
+
+    // Admin endpoints
+    this.app.post("/admin/verify-key", (req, res) => {
+      const providedKey = req.body.key || req.headers["x-api-key"];
+      const adminKey = process.env.ADMIN_API_KEY || "alsania-admin";
+      res.json({ valid: providedKey === adminKey });
+    });
+
+    this.app.get("/admin/logs", (req, res) => {
+      res.json([
+        { time: Date.now(), level: "info", message: "Server started" },
+        {
+          time: Date.now(),
+          level: "info",
+          message: "HTTP Gateway initialized",
+        },
+      ]);
+    });
+
+    this.app.get("/admin/stats", (req, res) => {
+      res.json({
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+      });
+    });
+
+    // ===== ACL ADMIN ENDPOINTS (admin key required) =====
+    // PermBits: VIEW=1, CALL=2, EDIT=4, ADMIN=8
+
+    this.app.get("/admin/acl", (req, res) => {
+      if (!this.isAdmin(req)) return res.status(401).json({ success: false, error: "Unauthorized" });
+      const { resourceType, resourceId } = req.query as Record<string, string>;
+      if (resourceType && resourceId) {
+        return res.json({
+          success: true,
+          entries: this.acl.listResourcePermissions({ type: resourceType as any, id: resourceId }),
+        });
+      }
+      return res.json({ success: true, note: "Pass ?resourceType=&resourceId= to list a resource's entries" });
+    });
+
+    this.app.post("/admin/acl/grant", (req, res) => {
+      if (!this.isAdmin(req)) return res.status(401).json({ success: false, error: "Unauthorized" });
+      try {
+        const { principal, resource, permBits, roleId } = req.body || {};
+        if (!principal || !resource) {
+          return res.status(400).json({ success: false, error: "principal and resource are required" });
+        }
+        const entry = this.acl.grantPermission(principal, resource, { permBits, roleId, grantedBy: "admin" });
+        return res.json({ success: true, entry });
+      } catch (error: any) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post("/admin/acl/revoke", (req, res) => {
+      if (!this.isAdmin(req)) return res.status(401).json({ success: false, error: "Unauthorized" });
+      try {
+        const { principal, resource } = req.body || {};
+        if (!principal || !resource) {
+          return res.status(400).json({ success: false, error: "principal and resource are required" });
+        }
+        const removed = this.acl.revokePermission(principal, resource);
+        return res.json({ success: true, removed });
+      } catch (error: any) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post("/admin/acl/roles", (req, res) => {
+      if (!this.isAdmin(req)) return res.status(401).json({ success: false, error: "Unauthorized" });
+      try {
+        const { id, name, resourceType, permBits } = req.body || {};
+        if (!id || !resourceType || typeof permBits !== "number") {
+          return res.status(400).json({ success: false, error: "id, resourceType, and numeric permBits are required" });
+        }
+        this.acl.defineRole({ id, name: name || id, resourceType, permBits });
+        return res.json({ success: true, role: this.acl.getRole(id) });
+      } catch (error: any) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get("/admin/acl/check", (req, res) => {
+      if (!this.isAdmin(req)) return res.status(401).json({ success: false, error: "Unauthorized" });
+      const { principalType, principalId, resourceType, resourceId, required } = req.query as Record<string, string>;
+      if (!principalType || !resourceType || !resourceId) {
+        return res.status(400).json({ success: false, error: "principalType, resourceType, resourceId are required" });
+      }
+      const principal = { type: principalType as any, id: principalId };
+      const resource = { type: resourceType as any, id: resourceId };
+      const bits = required ? parseInt(required, 10) : PermBits.VIEW;
+      return res.json({
+        success: true,
+        allowed: this.acl.checkPermission(principal, resource, bits),
+        effectiveBits: this.acl.effectiveBits(principal, resource),
+      });
+    });
+
+    this.app.post("/a2a/:agentId", async (req, res) => {
+      const { agentId } = req.params;
+      const { method, params, id } = req.body;
+
+      // Check API key if provided
+      const apiKey = req.headers["x-api-key"] as string;
+      if (apiKey && !this.apiKeys.has(apiKey)) {
+        return res.status(401).json({
+          jsonrpc: "2.0",
+          id: id || null,
+          error: { code: -32000, message: "Invalid API key" },
+        });
+      }
+
+      console.log(`A2A request for ${agentId}:`, { method, params });
+      // Handle A2A protocol methods
+      if (method === "agent/info") {
+        return res.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            name: "Aegis",
+            description: "Alsania's strategic guardian and technical executor",
+            version: "1.0.0",
+            capabilities: {
+              streaming: true,
+              pushNotifications: false,
+            },
+            skills: [
+              {
+                name: "agent_management",
+                description: "Register, list, and manage A2A agents",
+              },
+              {
+                name: "tool_execution",
+                description: "Execute MCP tools from the registry",
+              },
+              {
+                name: "task_management",
+                description: "Create and manage tasks across agents",
+              },
+            ],
+          },
+        });
+      }
+
+      if (method === "agent/message") {
+        try {
+          const result = await this.a2a.sendMessage(agentId, MessageType.EVENT, params);
+          // Store message for retrieval
+          if (!this.messageStore) this.messageStore = new Map();
+          if (!this.messageStore.has(agentId)) this.messageStore.set(agentId, []);
+          this.messageStore.get(agentId).push({
+            id: result,
+            from: params.from || "unknown",
+            content: params.content,
+            timestamp: Date.now(),
+            read: false
+          });
+          return res.json({ jsonrpc: "2.0", id, result: { messageId: result } });
+        } catch (error: any) {
+          return res.json({ jsonrpc: "2.0", id, error: { code: -32000, message: error.message } });
+        }
+      }
+
+      if (method === "agent/get_messages") {
+        try {
+          if (!this.messageStore) this.messageStore = new Map();
+          const messages = this.messageStore.get(agentId) || [];
+          const unreadOnly = params?.unreadOnly === true;
+          const filtered = unreadOnly ? messages.filter((m: any) => !m.read) : messages;
+          return res.json({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              messages: filtered,
+              total: messages.length,
+              unread: messages.filter((m: any) => !m.read).length
+            }
+          });
+        } catch (error: any) {
+          return res.json({ jsonrpc: "2.0", id, error: { code: -32000, message: error.message } });
+        }
+      }
+
+      // Method not found
+      res.json({
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32601, message: `Method not found: ${method}` },
+      });
+    });
+
+    // Protected routes - require API key
+    const protect = this.authMiddleware();
+
+    // List API keys (requires API key)
+    this.app.get("/keys", protect, async (req, res) => {
+      const keys = Array.from(this.apiKeys.entries()).map(([key, info]) => ({
+        key_prefix: key.slice(0, 8) + "...",
+        ...info,
+      }));
+      res.json({ keys });
+    });
+
+    // Revoke API key
+    this.app.delete("/keys/:keyId", protect, async (req, res) => {
+      const keyId = String(req.params.keyId);
+      // Find key by prefix or id
+      for (const [key, info] of this.apiKeys.entries()) {
+        if (key.startsWith(keyId) || info.id === keyId) {
+          this.apiKeys.delete(key);
+          return res.json({ success: true, message: "Key revoked" });
+        }
+      }
+      res.status(404).json({ error: "Key not found" });
+    });
+
+    this.app.get("/sse", this.handleSSE.bind(this));
+
+    // Main MCP endpoint using Streamable HTTP transport
+    this.app.post("/mcp", async (req, res) => {
+      try {
+        // Check if this is an MCP protocol request
+        if (
+          req.headers["content-type"]?.includes("application/json") ||
+          req.body.jsonrpc === "2.0"
+        ) {
+          // Handle JSON-RPC MCP requests
+          const { jsonrpc, id, method, params } = req.body;
+
+          if (method === "initialize") {
+            // Standard MCP initialization response
+            return res.json({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                protocolVersion: "2024-11-05",
+                capabilities: params.capabilities || {},
+                serverInfo: {
+                  name: "AlsaniaMCP",
+                  version: "1.0.4",
+                },
+              },
+            });
+          }
+
+          if (method === "tools/list") {
+            const tools = this.mcpServer.listTools();
+            return res.json({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                tools: tools.map((t) => ({
+                  name: `${t.serverId}/${t.toolName}`,
+                  description:
+                    t.schema.description || `Tool from ${t.serverId}`,
+                  inputSchema: t.schema.inputSchema || {
+                    type: "object",
+                    properties: {},
+                  },
+                })),
+              },
+            });
+          }
+
+          if (method === "tools/call") {
+            // Parse serverId from tool name (format: serverId/toolName)
+            let nameParts = params.name.split("/");
+            if (nameParts.length === 1) {
+              nameParts = params.name.split(".");
+            }
+            const serverId =
+              params.serverId || (nameParts.length > 1 ? nameParts[0] : "core");
+            const toolName = nameParts.length > 1 ? nameParts[1] : params.name;
+            const result = await this.mcpServer.callTool(
+              serverId,
+              toolName,
+              params.arguments || {},
+            );
+            return res.json({
+              jsonrpc: "2.0",
+              id,
+              result,
+            });
+          }
+
+          if (method === "resources/list") {
+            const resources = this.mcpServer.listResources();
+            return res.json({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                resources: resources.map((r) => ({
+                  uri: r.resourceUri,
+                  name: r.name,
+                  description: r.description,
+                  mimeType: r.mimeType,
+                })),
+              },
+            });
+          }
+
+          if (method === "resources/read") {
+            const result = await this.mcpServer.readResource(
+              params.serverId || "core",
+              params.uri,
+            );
+            return res.json({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                contents: [result],
+              },
+            });
+          }
+
+          // If we get here, it's an MCP method we don't handle
+          // Return method not found per JSON-RPC spec
+          return res.json({
+            jsonrpc: "2.0",
+            id,
+            error: {
+              code: -32601,
+              message: `Method not found: ${method}`,
+            },
+          });
+        }
+        // Handle both MCP protocol and direct tool calls
+        let serverId, toolName, args;
+
+        if (req.body.jsonrpc === "2.0" && req.body.method === "tools/call") {
+          // MCP protocol format
+          serverId = "default";
+          toolName = req.body.params?.name;
+          args = req.body.params?.arguments || {};
+        } else {
+          // Direct format
+          ({ serverId, toolName, args } = req.body);
+        }
+
+        if (!serverId || !toolName) {
+          throw new Error("Missing serverId or toolName in request");
+        }
+
+        const result = await this.mcpServer.callTool(serverId, toolName, args);
+
+        res.json({
+          success: true,
+          result,
+        });
+      } catch (error: any) {
+        console.error("MCP endpoint error:", error);
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
+      }
+    });
+
+    this.app.post("/message", async (req, res) => {
+      try {
+        // Handle both MCP protocol and direct tool calls
+        let serverId, toolName, args;
+
+        if (req.body.jsonrpc === "2.0" && req.body.method === "tools/call") {
+          // MCP protocol format
+          serverId = "default";
+          toolName = req.body.params?.name;
+          args = req.body.params?.arguments || {};
+        } else {
+          // Direct format
+          ({ serverId, toolName, args } = req.body);
+        }
+
+        if (!serverId || !toolName) {
+          throw new Error("Missing serverId or toolName in request");
+        }
+
+        const result = await this.mcpServer.callTool(serverId, toolName, args);
+
+        res.json({
+          success: true,
+          result,
+        });
+      } catch (error: any) {
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
+      }
+    });
+
+    this.app.get("/tools", async (req, res) => {
       const tools = this.mcpServer.listTools();
-      res.json({ tools });
+      res.json({
+        tools,
+      });
     });
 
-    this.app.get('/resources', async (req, res) => {
+    this.app.get("/resources", async (req, res) => {
       const resources = this.mcpServer.listResources();
-      res.json({ resources });
+      res.json({
+        resources,
+      });
     });
 
-    this.app.post('/resource', async (req, res) => {
+    this.app.post("/resource", async (req, res) => {
       try {
         const { serverId, resourceUri } = req.body;
-        
+
         const result = await this.mcpServer.readResource(serverId, resourceUri);
-        
-        res.json({ success: true, result });
+
+        res.json({
+          success: true,
+          result,
+        });
       } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
       }
     });
 
-    this.app.get('/prompts', async (req, res) => {
+    this.app.get("/prompts", async (req, res) => {
       const prompts = this.mcpServer.listPrompts();
-      res.json({ prompts });
+      res.json({
+        prompts,
+      });
     });
 
-    this.app.post('/prompt', async (req, res) => {
+    this.app.post("/prompt", async (req, res) => {
       try {
         const { serverId, promptName, args } = req.body;
-        
-        const result = await this.mcpServer.getPrompt(serverId, promptName, args);
-        
-        res.json({ success: true, result });
+
+        const result = await this.mcpServer.getPrompt(
+          serverId,
+          promptName,
+          args,
+        );
+
+        res.json({
+          success: true,
+          result,
+        });
       } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
       }
     });
 
-    this.app.post('/proxy/connect', async (req, res) => {
+    this.app.post("/proxy/connect", async (req, res) => {
       try {
         const serverId = await this.proxyManager.connectToServer(req.body);
-        res.json({ success: true, serverId });
+        res.json({
+          success: true,
+          serverId,
+        });
       } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
       }
     });
 
-    this.app.post('/proxy/disconnect/:serverId', async (req, res) => {
+    this.app.post("/proxy/disconnect/:serverId", async (req, res) => {
       try {
         await this.proxyManager.disconnectServer(req.params.serverId);
-        res.json({ success: true });
+        res.json({
+          success: true,
+        });
       } catch (error: any) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({
+          success: false,
+          error: error.message,
+        });
       }
     });
 
-    this.app.get('/proxy/servers', async (req, res) => {
+    this.app.get("/proxy/servers", async (req, res) => {
       const servers = this.proxyManager.getActiveServers();
-      res.json({ servers });
+      res.json({
+        servers,
+      });
     });
 
-    this.app.get('/proxy/status/:serverId', async (req, res) => {
+    this.app.get("/proxy/status/:serverId", async (req, res) => {
       const status = this.proxyManager.getServerStatus(req.params.serverId);
       if (!status) {
-        return res.status(404).json({ error: 'Server not found' });
+        return res.status(404).json({
+          error: "Server not found",
+        });
       }
       res.json(status);
     });
 
-    this.app.post('/gateway/:route', async (req, res) => {
+    this.app.post("/gateway/:route", async (req, res) => {
       const routeConfig = this.routes.get(req.params.route);
-      
+
       if (!routeConfig) {
-        return res.status(404).json({ error: 'Route not found' });
+        return res.status(404).json({
+          error: "Route not found",
+        });
       }
 
+      let principal: Principal = { type: "public" };
       if (routeConfig.requiresAuth) {
-        const token = req.headers.authorization?.replace('Bearer ', '');
-        if (!token || !this.verifyToken(token)) {
-          return res.status(401).json({ error: 'Unauthorized' });
+        const token = req.headers.authorization?.replace("Bearer ", "");
+        const claims = token ? this.verifyTokenClaims(token) : null;
+        if (!claims) {
+          return res.status(401).json({
+            error: "Unauthorized",
+          });
         }
+        principal = { type: "user", id: String(claims.sub ?? claims.userId ?? "unknown") };
+      }
+
+      // Object-level ACL: must hold CALL on the target MCP server.
+      // Skipped entirely when the gateway has no ACL entries for the server
+      // (preserves current open behavior); enforced once any grant exists.
+      const aclResource = { type: "mcpServer" as const, id: routeConfig.targetServerId };
+      const aclEntries = this.acl.listResourcePermissions(aclResource);
+      if (
+        aclEntries.length > 0 &&
+        !this.acl.checkPermission(principal, aclResource, PermBits.CALL)
+      ) {
+        return res.status(403).json({ error: "Forbidden" });
       }
 
       try {
-        const result = await this.routeToServer(routeConfig.targetServerId, req.body);
+        const result = await this.routeToServer(
+          routeConfig.targetServerId,
+          req.body,
+        );
         res.json(result);
       } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({
+          error: error.message,
+        });
+      }
+    });
+
+    // ===== MISSING ENDPOINTS - TOOL MANAGEMENT =====
+    this.app.post("/tools/register", async (req, res) => {
+      try {
+        const { serverId, toolName, schema, handler } = req.body;
+
+        // For HTTP, we need to create a wrapper since we can't pass functions
+        // This would require a different approach - either predefined handlers
+        // or a plugin system
+        res.status(501).json({
+          success: false,
+          error:
+            "Dynamic tool registration requires plugin system. Use predefined tools.",
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.delete("/tools/:serverId/:toolName", async (req, res) => {
+      try {
+        const { serverId, toolName } = req.params;
+        this.mcpServer.unregisterTool(serverId, toolName);
+        res.json({
+          success: true,
+          message: `Tool ${serverId}/${toolName} unregistered`,
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // ===== USER MANAGEMENT ENDPOINTS (GChat) =====
+    this.app.post("/user/register", async (req, res) => {
+      try {
+        const {
+          userId,
+          userName,
+          email,
+          userType = "guest",
+          metadata = {},
+        } = req.body;
+
+        if (!userId || !userName) {
+          return res.status(400).json({
+            success: false,
+            error: "userId and userName are required",
+          });
+        }
+
+        // Register user as 'human' agent in agent framework
+        // In production, this would use a proper user database
+        // For now, we use the agent framework with human type
+        const userAgent = {
+          agentId: `user-${userId}`,
+          agentName: userName,
+          agentType: "human",
+          capabilities: [
+            "send_message",
+            "receive_message",
+            "start_conversation",
+          ],
+          endpoint: null, // Users connect via GChat
+          metadata: {
+            ...metadata,
+            userId,
+            userName,
+            email,
+            userType,
+            registeredVia: "gchat",
+          },
+        };
+
+        // Register with A2A system as peer
+        const a2aPeer = {
+          id: `user-${userId}`,
+          name: userName,
+          capabilities: ["message"],
+          status: "online" as const,
+          lastSeen: Date.now(),
+          metadata: {
+            type: "human",
+            userId,
+            email,
+            userType,
+          },
+        };
+
+        this.a2a.registerPeer(a2aPeer as Peer);
+
+        res.json({
+          success: true,
+          userId,
+          agentId: `user-${userId}`,
+          message: `User ${userName} registered successfully`,
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get("/user/agents", async (req, res) => {
+      try {
+        // Get all AI agents (excluding human users)
+        const peers = this.a2a.getPeers();
+        const aiAgents = peers.filter(
+          (peer) => peer.metadata?.type !== "human",
+        );
+
+        res.json({
+          success: true,
+          agents: aiAgents,
+          count: aiAgents.length,
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // ===== CONVERSATION ENDPOINTS (GChat) =====
+    this.app.post("/conversations", async (req, res) => {
+      try {
+        const { userId, agentId, title, metadata = {} } = req.body;
+
+        if (!userId || !agentId) {
+          return res.status(400).json({
+            success: false,
+            error: "userId and agentId are required",
+          });
+        }
+
+        // Create conversation ID
+        const conversationId = `conv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // In production, this would store in database
+        // For now, we return a mock conversation
+        const conversation = {
+          conversationId,
+          userId,
+          agentId,
+          title: title || `Conversation with ${agentId}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messageCount: 0,
+          metadata,
+          participants: [
+            { id: userId, type: "human", role: "user" },
+            { id: agentId, type: "ai", role: "assistant" },
+          ],
+        };
+
+        res.json({
+          success: true,
+          conversation,
+          message: "Conversation created successfully",
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post(
+      "/conversations/:conversationId/messages",
+      async (req, res) => {
+        try {
+          const { conversationId } = req.params;
+          const {
+            fromUserId,
+            toAgentId,
+            message,
+            messageType = "text",
+          } = req.body;
+
+          if (!fromUserId || !toAgentId || !message) {
+            return res.status(400).json({
+              success: false,
+              error: "fromUserId, toAgentId, and message are required",
+            });
+          }
+
+          // Create message ID
+          const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+          // Send message via A2A system
+          const a2aResponse = await this.a2a.sendMessage(
+            toAgentId,
+            MessageType.EVENT, // Using event type for user messages
+            {
+              type: "user_message",
+              fromUser: fromUserId,
+              message,
+              messageType,
+              conversationId,
+              timestamp: new Date().toISOString(),
+            },
+          );
+
+          // In production, store message in database
+          const storedMessage = {
+            messageId,
+            conversationId,
+            fromUserId,
+            toAgentId,
+            message,
+            messageType,
+            timestamp: new Date().toISOString(),
+            status: "sent",
+            a2aMessageId: a2aResponse,
+          };
+
+          res.json({
+            success: true,
+            message: storedMessage,
+            a2aResponse,
+          });
+        } catch (error: any) {
+          res.status(500).json({ success: false, error: error.message });
+        }
+      },
+    );
+
+    this.app.get(
+      "/conversations/:conversationId/messages",
+      async (req, res) => {
+        try {
+          const { conversationId } = req.params;
+          const { limit = 50, offset = 0 } = req.query;
+
+          // In production, fetch from database
+          // For now, return mock messages
+          const mockMessages = [
+            {
+              messageId: `msg-${Date.now()}-1`,
+              conversationId,
+              fromUserId: "system",
+              toAgentId: "user",
+              message: "Conversation started. How can I help you today?",
+              messageType: "text",
+              timestamp: new Date(Date.now() - 300000).toISOString(),
+              status: "delivered",
+            },
+          ];
+
+          res.json({
+            success: true,
+            conversationId,
+            messages: mockMessages,
+            total: mockMessages.length,
+            limit: parseInt(String(limit)),
+            offset: parseInt(String(offset)),
+          });
+        } catch (error: any) {
+          res.status(500).json({ success: false, error: error.message });
+        }
+      },
+    );
+
+    // ===== CONVERSATION ENDPOINTS (GChat) =====
+    this.app.post("/conversations", async (req, res) => {
+      try {
+        const { userId, agentId, title, metadata = {} } = req.body;
+
+        if (!userId || !agentId) {
+          return res.status(400).json({
+            success: false,
+            error: "userId and agentId are required",
+          });
+        }
+
+        // Create conversation ID
+        const conversationId = `conv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // In production, this would store in database
+        // For now, we return a mock conversation
+        const conversation = {
+          conversationId,
+          userId,
+          agentId,
+          title: title || `Conversation with ${agentId}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messageCount: 0,
+          metadata,
+          participants: [
+            { id: userId, type: "human", role: "user" },
+            { id: agentId, type: "ai", role: "assistant" },
+          ],
+        };
+
+        res.json({
+          success: true,
+          conversation,
+          message: "Conversation created successfully",
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post(
+      "/conversations/:conversationId/messages",
+      async (req, res) => {
+        try {
+          const { conversationId } = req.params;
+          const {
+            fromUserId,
+            toAgentId,
+            message,
+            messageType = "text",
+          } = req.body;
+
+          if (!fromUserId || !toAgentId || !message) {
+            return res.status(400).json({
+              success: false,
+              error: "fromUserId, toAgentId, and message are required",
+            });
+          }
+
+          // Create message ID
+          const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+          // Send message via A2A system
+          const a2aResponse = await this.a2a.sendMessage(
+            toAgentId,
+            MessageType.EVENT, // Using event type for user messages
+            {
+              type: "user_message",
+              fromUser: fromUserId,
+              message,
+              messageType,
+              conversationId,
+              timestamp: new Date().toISOString(),
+            },
+          );
+
+          // In production, store message in database
+          const storedMessage = {
+            messageId,
+            conversationId,
+            fromUserId,
+            toAgentId,
+            message,
+            messageType,
+            timestamp: new Date().toISOString(),
+            status: "sent",
+            a2aMessageId: a2aResponse,
+          };
+
+          res.json({
+            success: true,
+            message: storedMessage,
+            a2aResponse,
+          });
+        } catch (error: any) {
+          res.status(500).json({ success: false, error: error.message });
+        }
+      },
+    );
+
+    this.app.get(
+      "/conversations/:conversationId/messages",
+      async (req, res) => {
+        try {
+          const { conversationId } = req.params;
+          const { limit = 50, offset = 0 } = req.query;
+
+          // In production, fetch from database
+          // For now, return mock messages
+          const mockMessages = [
+            {
+              messageId: `msg-${Date.now()}-1`,
+              conversationId,
+              fromUserId: "system",
+              toAgentId: "user",
+              message: "Conversation started. How can I help you today?",
+              messageType: "text",
+              timestamp: new Date(Date.now() - 300000).toISOString(),
+              status: "delivered",
+            },
+          ];
+
+          res.json({
+            success: true,
+            conversationId,
+            messages: mockMessages,
+            total: mockMessages.length,
+            limit: parseInt(String(limit)),
+            offset: parseInt(String(offset)),
+          });
+        } catch (error: any) {
+          res.status(500).json({ success: false, error: error.message });
+        }
+      },
+    );
+
+    // ===== A2A COMMUNICATION ENDPOINTS =====
+    this.app.post("/a2a/register", async (req, res) => {
+      try {
+        const { peerId, peerName, capabilities, status, metadata } = req.body;
+
+        if (!peerId || !peerName) {
+          return res.status(400).json({
+            success: false,
+            error: "peerId and peerName are required",
+          });
+        }
+
+        const peer = {
+          id: peerId,
+          name: peerName,
+          capabilities: capabilities || ["message", "tool_execution"],
+          status: status || "online",
+          lastSeen: Date.now(),
+          metadata: metadata || {},
+        };
+
+        // Register peer with A2A system
+        this.a2a.registerPeer(peer);
+
+        res.json({
+          success: true,
+          peerId,
+          message: `Peer ${peerName} registered successfully`,
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post("/a2a/message", async (req, res) => {
+      try {
+        const {
+          to,
+          message,
+          type = "event",
+          priority = "normal",
+          metadata,
+        } = req.body;
+
+        if (!to || !message) {
+          return res.status(400).json({
+            success: false,
+            error: "to and message are required",
+          });
+        }
+
+        const messageId = await this.a2a.sendMessage(to, type, message, {
+          priority,
+          metadata,
+        });
+
+        res.json({
+          success: true,
+          messageId,
+          message: "Message sent successfully",
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get("/a2a/peers", async (req, res) => {
+      try {
+        const peers = this.a2a.getPeers();
+        res.json({
+          success: true,
+          peers,
+          count: peers.length,
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // A2A Message inbox endpoint
+    this.app.get("/a2a/inbox", async (req, res) => {
+      try {
+        // This would return messages sent to this server
+        // For now, return empty array as message storage isn't implemented
+        res.json({
+          success: true,
+          messages: [],
+          message: "Message inbox - real-time messages are handled via SSE",
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // A2A Status endpoint
+    this.app.get("/a2a/status", async (req, res) => {
+      try {
+        const status = this.a2a.getStatus();
+        res.json({
+          success: true,
+          status,
+        });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // ===== MISSING ENDPOINTS - SERVER MANAGEMENT =====
+    this.app.get("/servers", async (req, res) => {
+      try {
+        const tools = this.mcpServer.listTools();
+        const servers = [...new Set(tools.map((t) => t.serverId))];
+        res.json({ success: true, servers });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.get("/servers/:serverId/tools", async (req, res) => {
+      try {
+        const { serverId } = req.params;
+        const tools = this.mcpServer.listTools();
+        const serverTools = tools.filter((t) => t.serverId === serverId);
+        res.json({ success: true, tools: serverTools });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // ===== SETTINGS ENDPOINTS (GChat Storage Configuration) =====
+    this.app.get("/settings/chat-storage", async (req, res) => {
+      try {
+        // In production, this would load from database or config file
+        // For now, return default settings
+        const defaultSettings = {
+          storageType: "internal",
+          emeSettings: null,
+        };
+
+        // Check if we have a settings file
+        const settingsPath = path.join(
+          process.cwd(),
+          "data/chat-storage-settings.json",
+        );
+
+        if (fs.existsSync(settingsPath)) {
+          const savedSettings = JSON.parse(
+            fs.readFileSync(settingsPath, "utf8"),
+          );
+          res.json(savedSettings);
+        } else {
+          res.json(defaultSettings);
+        }
+      } catch (error: any) {
+        console.error("Error loading settings:", error);
+        res.json({ storageType: "internal", emeSettings: null });
+      }
+    });
+
+    this.app.post("/settings/chat-storage", async (req, res) => {
+      try {
+        const settings = req.body;
+
+        // Validate settings
+        if (
+          !settings.storageType ||
+          !["internal", "eme"].includes(settings.storageType)
+        ) {
+          return res.status(400).json({
+            success: false,
+            error: "Invalid storage type. Must be 'internal' or 'eme'",
+          });
+        }
+
+        if (settings.storageType === "eme" && !settings.emeSettings) {
+          return res.status(400).json({
+            success: false,
+            error: "EME settings required when storage type is 'eme'",
+          });
+        }
+
+        // Save settings to file
+        const dataDir = path.join(process.cwd(), "data");
+        const settingsPath = path.join(dataDir, "chat-storage-settings.json");
+
+        // Ensure data directory exists
+        if (!fs.existsSync(dataDir)) {
+          fs.mkdirSync(dataDir, { recursive: true });
+        }
+
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+        res.json({ success: true, message: "Settings saved successfully" });
+
+        // If EME is selected, automatically connect via proxy
+        if (settings.storageType === "eme" && settings.emeSettings) {
+          setTimeout(async () => {
+            try {
+              await this.proxyManager.connectToServer({
+                id: "eme-memory-engine",
+                transport: settings.emeSettings.transport,
+                endpoint:
+                  settings.emeSettings.transport === "http"
+                    ? settings.emeSettings.endpoint
+                    : undefined,
+                command:
+                  settings.emeSettings.transport === "stdio"
+                    ? settings.emeSettings.endpoint
+                    : undefined,
+              });
+              console.log("EME automatically connected via settings");
+            } catch (error) {
+              console.error("Failed to auto-connect EME:", error);
+            }
+          }, 100);
+        }
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.delete("/settings/chat-storage", async (req, res) => {
+      try {
+        const settingsPath = path.join(
+          process.cwd(),
+          "data/chat-storage-settings.json",
+        );
+
+        if (fs.existsSync(settingsPath)) {
+          fs.unlinkSync(settingsPath);
+        }
+
+        res.json({ success: true, message: "Settings reset to defaults" });
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    // ===== OPENAPI SCHEMA ENDPOINT =====
+    this.app.get("/openapi.json", async (req, res) => {
+      try {
+        const tools = this.mcpServer.listTools();
+        const openapiSchema = {
+          openapi: "3.0.0",
+          info: {
+            title: "AlsaniaMCP API",
+            version: "1.0.0",
+            description: "Model Context Protocol Server with A2A Communication",
+          },
+          servers: [
+            { url: "http://localhost:8050", description: "Local development" },
+          ],
+          paths: {
+            "/health": {
+              get: {
+                summary: "Health check",
+                responses: {
+                  "200": {
+                    description: "Service health status",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            status: { type: "string" },
+                            timestamp: { type: "number" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "/mcp": {
+              post: {
+                summary: "MCP protocol endpoint",
+                requestBody: {
+                  content: {
+                    "application/json": {
+                      schema: {
+                        oneOf: [
+                          {
+                            type: "object",
+                            properties: {
+                              serverId: { type: "string" },
+                              toolName: { type: "string" },
+                              args: { type: "object" },
+                            },
+                            required: ["serverId", "toolName"],
+                          },
+                          {
+                            type: "object",
+                            properties: {
+                              jsonrpc: { type: "string" },
+                              id: { type: ["string", "number"] },
+                              method: { type: "string" },
+                              params: { type: "object" },
+                            },
+                            required: ["jsonrpc", "id", "method"],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+                responses: {
+                  "200": {
+                    description: "Tool execution result",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            success: { type: "boolean" },
+                            result: { type: "object" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "/tools": {
+              get: {
+                summary: "List all available tools",
+                responses: {
+                  "200": {
+                    description: "List of tools",
+                    content: {
+                      "application/json": {
+                        schema: {
+                          type: "object",
+                          properties: {
+                            tools: {
+                              type: "array",
+                              items: {
+                                type: "object",
+                                properties: {
+                                  serverId: { type: "string" },
+                                  toolName: { type: "string" },
+                                  description: { type: "string" },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        };
+
+        // Add tool-specific paths
+        tools.forEach((tool) => {
+          const path = `/tools/${tool.serverId}/${tool.toolName}`;
+          (openapiSchema.paths as any)[path] = {
+            post: {
+              summary: `Execute ${tool.toolName} tool`,
+              requestBody: {
+                content: {
+                  "application/json": {
+                    schema: {
+                      type: "object",
+                      properties: {
+                        args: { type: "object" },
+                      },
+                    },
+                  },
+                },
+              },
+              responses: {
+                "200": {
+                  description: "Tool execution result",
+                },
+              },
+            },
+          };
+        });
+
+        res.json(openapiSchema);
+      } catch (error: any) {
+        res.status(500).json({ success: false, error: error.message });
       }
     });
   }
 
   private handleSSE(req: Request, res: Response) {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Cache-Control", "no-cache");
 
     const sendEvent = (data: any) => {
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
-    sendEvent({ type: 'connected', timestamp: Date.now() });
+    sendEvent({
+      type: "connected",
+      timestamp: Date.now(),
+    });
 
     const heartbeat = setInterval(() => {
-      sendEvent({ type: 'heartbeat', timestamp: Date.now() });
+      sendEvent({
+        type: "heartbeat",
+        timestamp: Date.now(),
+      });
     }, 30000);
 
-    req.on('close', () => {
+    req.on("close", () => {
       clearInterval(heartbeat);
     });
   }
 
+  /** True if the request carries the admin API key (x-api-key or body.key). */
+  private isAdmin(req: Request): boolean {
+    const provided = (req.headers["x-api-key"] as string) || (req.body && req.body.key);
+    const adminKey = process.env.ADMIN_API_KEY || "alsania-admin";
+    return provided === adminKey;
+  }
+
+  /** Verify a JWT and return its claims, or null if invalid. */
+  private verifyTokenClaims(token: string): jwt.JwtPayload | null {
+    try {
+      const decoded = jwt.verify(token, process.env.SESSION_SECRET || "default-secret");
+      return typeof decoded === "string" ? null : decoded;
+    } catch {
+      return null;
+    }
+  }
+
   private verifyToken(token: string): boolean {
     try {
-      jwt.verify(token, process.env.SESSION_SECRET || 'default-secret');
+      jwt.verify(token, process.env.SESSION_SECRET || "default-secret");
       return true;
     } catch {
       return false;
     }
+  }
+
+  private verifyApiKey(apiKey: string): boolean {
+    return this.apiKeys.has(apiKey);
   }
 
   private async routeToServer(serverId: string, data: any): Promise<any> {
@@ -184,10 +1600,23 @@ export class HTTPGateway {
     this.routes.set(path, route);
   }
 
+  addApiKey(apiKey: string) {
+    this.apiKeys.set(apiKey, {
+      id: apiKey.slice(0, 8),
+      name: "dynamic",
+      createdAt: Date.now(),
+    });
+  }
+
+  removeApiKey(apiKey: string) {
+    this.apiKeys.delete(apiKey);
+  }
+
   start() {
-    this.app.listen(this.port, '0.0.0.0', () => {
+    this.app.listen(this.port, "0.0.0.0", () => {
       console.log(`HTTP Gateway listening on port ${this.port}`);
-      console.log(`SSE endpoint: http://localhost:${this.port}/stream`);
+      console.log(`SSE endpoint: http://localhost:${this.port}/sse`);
+      console.log(`MCP endpoint: http://localhost:${this.port}/mcp`);
     });
   }
 }
