@@ -161,7 +161,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload performance reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: performance-reports
@@ -232,7 +232,7 @@ jobs:
         continue-on-error: true
 
       - name: Upload accessibility reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: accessibility-reports
@@ -260,7 +260,7 @@ jobs:
         run: npm run build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-artifacts
           path: dist/
